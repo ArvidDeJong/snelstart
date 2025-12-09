@@ -1,0 +1,31 @@
+{
+    "name": "darvis/snelstart",
+    "description": "Laravel package voor Snelstart boekhoudsoftware integratie",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Arvid de Jong",
+            "email": "info@arvid.nl"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "Darvis\\Snelstart\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Darvis\\Snelstart\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Darvis\\Snelstart\\SnelstartServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
