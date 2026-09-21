@@ -57,6 +57,8 @@ it('encrypts the cached token and keeps the client key out of the cache key', fu
 });
 
 it('caches the token until sixty seconds before it expires', function () {
+    // Stop the clock on a whole second, so the 3540 seconds are exactly that.
+    $this->travelTo(now()->startOfSecond());
     $this->fakeSnelstart(expiresIn: 3600);
 
     app(SnelstartAPI::class)->getCompanyInfo();

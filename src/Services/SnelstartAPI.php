@@ -398,12 +398,20 @@ class SnelstartAPI
         }
 
         $token = $this->accessToken;
-        $expiresAt = $this->tokenExpiresAt;
+        $expiresAt = $this->tokenExpiresAt->getTimestamp();
+
+        // Whole seconds, counted here: how a cache repository turns a date into a number of seconds
+        // differs between Laravel and Carbon versions, and rounding down costs the last second.
+        $seconds = $expiresAt - Carbon::now()->getTimestamp();
+
+        if ($seconds < 1) {
+            return;
+        }
 
         $this->tokenCache(fn (Repository $cache) => $cache->put(
             $this->tokenCacheKey(),
-            Crypt::encryptString((string) json_encode(['access_token' => $token, 'expires_at' => $expiresAt->getTimestamp()])),
-            $expiresAt,
+            Crypt::encryptString((string) json_encode(['access_token' => $token, 'expires_at' => $expiresAt])),
+            $seconds,
         ));
     }
 
