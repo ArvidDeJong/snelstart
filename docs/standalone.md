@@ -1,14 +1,14 @@
 ---
-title: Standalone client
+title: "Standalone client"
 nav_order: 6
-description: "Use the SnelStart client in a PHP project without Laravel, with cURL, and see where it behaves differently from the Laravel client."
+description: "Use darvis/snelstart in a PHP project without Laravel: the cURL based standalone client, its settings and timeouts, and how it differs from the Laravel client."
 ---
 
 # Standalone client
 
 `Darvis\Snelstart\Standalone\SnelstartAPI` does what the Laravel client does, without the container, the config or Laravel's HTTP client. It uses the PHP cURL extension.
 
-## From an array
+## Build the client from an array
 
 ```php
 use Darvis\Snelstart\Standalone\SnelstartAPI;
@@ -22,9 +22,11 @@ $company = $snelstart->getCompanyInfo();
 $relations = $snelstart->getRelaties();
 ```
 
+This goes in any PHP file of your project that loads Composer's `vendor/autoload.php`. `$clientKey` and `$subscriptionKey` are the two keys SnelStart issued; read them from your own configuration, never from the source code.
+
 `base_url` and `token_url` are optional; they fall back to `https://b2bapi.snelstart.nl/v2` and `https://auth.snelstart.nl/b2b/token`. So are `timeout` and `connect_timeout`, in seconds; they fall back to 30 and 10, also when the value is not a positive number. Without a `client_key` the constructor throws `Snelstart API config is incomplete (token_url, client_key).`
 
-## From the environment
+## Build the client from environment variables
 
 ```php
 $snelstart = SnelstartAPI::fromEnv();
@@ -32,7 +34,7 @@ $snelstart = SnelstartAPI::fromEnv();
 
 `fromEnv()` reads `SNELSTART_BASE_URL`, `SNELSTART_TOKEN_URL`, `SNELSTART_CLIENT_KEY`, `SNELSTART_SUBSCRIPTION_KEY`, `SNELSTART_TIMEOUT` and `SNELSTART_CONNECT_TIMEOUT` with `getenv()`. It does not load a `.env` file; the variables have to be in the real environment.
 
-## Which one do I use?
+## Which of the two clients do I use?
 
 | | `Services\SnelstartAPI` | `Standalone\SnelstartAPI` |
 | --- | --- | --- |

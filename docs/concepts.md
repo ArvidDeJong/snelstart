@@ -1,14 +1,14 @@
 ---
-title: How it works
+title: "How it works"
 nav_order: 4
 description: "How darvis/snelstart authenticates, where the access token is cached, the retry on a refused token, the timeouts and where the SnelStart keys travel."
 ---
 
 # How it works
 
-## A call, step by step
+## What happens when you make a call
 
-1. The client looks for an access token: first on its own instance, then in the cache. When there is none, or it expires within sixty seconds, it fetches one first.
+1. The client looks for an access token (the short lived key SnelStart gives in exchange for your client key): first on its own instance, then in the cache. When there is none, or it expires within sixty seconds, it fetches one first.
 2. The token request is a form post to the token URL with `grant_type=clientkey` and `clientkey=<your client key>`.
 3. The API call goes to the base URL plus the path, with `Authorization: Bearer <token>`, `Accept: application/json` and, when a subscription key is set, `Ocp-Apim-Subscription-Key`.
 4. A 401 on a token the client already had is answered with a new token and one repeat of the call, see below.
@@ -37,11 +37,11 @@ The standalone client has no cache and no lock; its token lives on the instance.
 
 ## A refused token: one new token, one repeat
 
-When a call gets a 401 and the token was one the client already had (from memory or from the cache), SnelStart dropped that token before it expired. Both clients then forget the token, fetch a new one and send the same request once more.
+When a call gets a 401 (the HTTP status for "not authorised") and the token was one the client already had, from memory or from the cache, the token is no longer accepted although its lifetime has not run out. Both clients then forget the token, fetch a new one and send the same request once more.
 
-- A refused call was not carried out, so repeating a `POST` does not create anything twice.
+- Only a 401 is repeated: the status with which a server refuses a request because of its credentials.
 - A second 401 throws, as any other failure does.
-- A 401 on a token that was fetched for this very call is not repeated: that is not about the token. Check the subscription key.
+- A 401 on a token that was fetched for this very call is not repeated: a new token would not change the answer. Check the subscription key.
 - A 401 of the token endpoint is never repeated.
 - Nothing else is retried: not a 429, not a 5xx.
 
@@ -56,7 +56,7 @@ Both clients wait 30 seconds for a whole request and 10 seconds for the connecti
 
 Both are in seconds, and `2.5` is allowed. A value that is not a positive number gives the default.
 
-## What comes back
+## What a call returns
 
 | Response | Result |
 | --- | --- |
@@ -93,6 +93,6 @@ The response body of a failed call is part of the exception message, and a serve
 
 The rest of the response body is not filtered. It can hold data of the administration, so treat your log as you treat the bookkeeping.
 
-## Two clients
+## Which of the two clients this is about
 
 `Darvis\Snelstart\Services\SnelstartAPI` is the client for Laravel. `Darvis\Snelstart\Standalone\SnelstartAPI` is the same set of methods for a project without Laravel. See [Standalone client](standalone.md) for the differences.

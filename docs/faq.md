@@ -1,7 +1,7 @@
 ---
-title: FAQ
+title: "FAQ"
 nav_order: 9
-description: "Short answers about darvis/snelstart: authentication, the token lifetime, failed calls, where the keys go, use without Laravel and testing."
+description: "Short answers about darvis/snelstart: what it is, what you need, authentication and the token, failed calls, retries, key safety, plain PHP and testing."
 faq: true
 ---
 

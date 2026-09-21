@@ -1,14 +1,14 @@
 ---
-title: API reference
+title: "API reference"
 nav_order: 5
-description: "Every public method of the SnelStart client, the echo service, the config accessor, the artisan command and the container bindings."
+description: "Every public method of darvis/snelstart: both SnelStart clients, EchoService, SnelstartException and its status, SnelstartConfig, the command and the bindings."
 ---
 
 # API reference
 
 ## Darvis\Snelstart\Services\SnelstartAPI
 
-The constructor reads the config and throws a `SnelstartException` when the token URL or the client key is empty. Every method returns an array and throws on a 4xx or 5xx, see [How it works](concepts.md).
+The constructor reads the config and throws a `SnelstartException` when the token URL or the client key is empty. Every method that makes a request returns an array and throws a `SnelstartException` on a 4xx or 5xx, see [How it works](concepts.md).
 
 | Method | Request |
 | --- | --- |
@@ -91,7 +91,7 @@ What both clients throw. It extends `RuntimeException` and has the message the p
 | --- | --- |
 | A 4xx or 5xx of the API, also the second 401 after the repeat | that status |
 | A 4xx or 5xx of the token endpoint | that status |
-| A token response without `access_token` | the status of that response, `200` as a rule |
+| A 2xx token response without `access_token` | the status of that response |
 | An incomplete config | `0` |
 | A cURL error in the standalone client (timeout, DNS, refused connection) | `0` |
 

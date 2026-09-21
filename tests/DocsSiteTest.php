@@ -185,3 +185,65 @@ test('the footer credits ARVID.NL without a personal name', function () {
 
     expect(file_get_contents(docsPath('_includes/head_custom.html')))->not->toContain('"Person"');
 });
+
+test('every description is short enough to be shown whole as a search result', function () {
+    foreach (glob(docsPath('*.md')) as $page) {
+        $length = mb_strlen(frontMatter($page)['description']);
+
+        expect($length)->toBeGreaterThanOrEqual(110, basename($page).': the description says too little')
+            ->and($length)->toBeLessThanOrEqual(160, basename($page).': the description gets cut off');
+    }
+});
+
+test('the FAQ stays between six and ten questions', function () {
+    $questions = substr_count((string) file_get_contents(docsPath('_data/faq.yml')), '- q: ');
+
+    expect($questions)->toBeGreaterThanOrEqual(6)->toBeLessThanOrEqual(10);
+});
+
+test('the installation page ends with a way to check that it works', function () {
+    expect(file_get_contents(docsPath('installation.md')))
+        ->toContain('## Check that it works')
+        ->toContain('php artisan snelstart:test')
+        ->toContain('Connection successful!');
+});
+
+test('every page is linked from the home page, and every relative link points at a page', function () {
+    $pages = array_map('basename', glob(docsPath('*.md')));
+    $index = (string) file_get_contents(docsPath('index.md'));
+
+    foreach ($pages as $page) {
+        if ($page !== 'index.md') {
+            expect(str_contains($index, ']('.$page.')'))->toBeTrue($page.' is not linked from index.md');
+        }
+
+        preg_match_all('/\]\(([a-z0-9-]+\.md)(#[a-z0-9-]+)?\)/', (string) file_get_contents(docsPath($page)), $links);
+
+        foreach ($links[1] as $target) {
+            expect(in_array($target, $pages, true))->toBeTrue($page.' links to '.$target.', which does not exist');
+        }
+    }
+});
+
+test('the messages the docs quote exist in the source', function () {
+    $source = '';
+
+    foreach (['Services/SnelstartAPI.php', 'Standalone/SnelstartAPI.php', 'Console/Commands/TestSnelstartConnection.php', 'Services/EchoService.php'] as $file) {
+        $source .= file_get_contents(dirname(__DIR__).'/src/'.$file);
+    }
+
+    foreach ([
+        'Snelstart API config is incomplete (token_url, client_key).',
+        'Failed to retrieve access_token from Snelstart.',
+        'Snelstart token response does not contain access_token.',
+        'Snelstart API call failed.',
+        'Snelstart token cache is not available, the token is kept in memory only',
+        'Connection successful!',
+        'Connection failed: ',
+        'Company info retrieved.',
+        'Testing Snelstart API connection...',
+    ] as $message) {
+        expect($source)->toContain($message);
+        expect(file_get_contents(docsPath('troubleshooting.md')).file_get_contents(docsPath('installation.md')))->toContain(rtrim($message, ': '));
+    }
+});
