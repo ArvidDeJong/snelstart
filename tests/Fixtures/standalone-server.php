@@ -28,7 +28,16 @@ function answer(string $path, array $headers, string $body): array
 {
     $token = fn (array $extra = []): string => (string) json_encode(['access_token' => 'standalone-access-token', 'token_type' => 'bearer'] + $extra);
 
+    // /slow/1300/v2/... and /token/slow-600 wait that many milliseconds before they answer.
+    if (preg_match('#^/(?:slow/|token/slow-)(\d+)#', $path, $match)) {
+        usleep((int) $match[1] * 1000);
+    }
+
     return match (true) {
+        str_starts_with($path, '/only/') => ($headers['authorization'] ?? '') === 'Bearer '.explode('/', $path)[2]
+            ? [200, '{"id":"abc"}']
+            : [401, '{"message":"Unauthorized"}'],
+        str_starts_with($path, '/token/slow-') => [200, $token(['expires_in' => 3600])],
         $path === '/token/ok' => [200, $token(['expires_in' => 3600])],
         $path === '/token/short' => [200, $token(['expires_in' => 30])],
         $path === '/token/no-expiry' => [200, $token()],
@@ -84,7 +93,8 @@ while ($client = @stream_socket_accept($server, 120)) {
         stream_set_timeout($client, 3);
         fread($client, 1);
     } else {
-        fwrite($client, "HTTP/1.1 {$status} Status\r\nContent-Type: application/json\r\nContent-Length: ".strlen($payload)."\r\nConnection: close\r\n\r\n".$payload);
+        // The client of a timeout test has hung up by now.
+        @fwrite($client, "HTTP/1.1 {$status} Status\r\nContent-Type: application/json\r\nContent-Length: ".strlen($payload)."\r\nConnection: close\r\n\r\n".$payload);
     }
 
     fclose($client);

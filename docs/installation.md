@@ -44,12 +44,20 @@ php artisan vendor:publish --tag=snelstart-config
 | --- | --- | --- |
 | `base_url` | `SNELSTART_BASE_URL` | `https://b2bapi.snelstart.nl/v2` |
 | `client_key` | `SNELSTART_CLIENT_KEY` | none |
+| `connect_timeout` | `SNELSTART_CONNECT_TIMEOUT` | `10` seconds |
 | `subscription_key` | `SNELSTART_SUBSCRIPTION_KEY` | none |
+| `timeout` | `SNELSTART_TIMEOUT` | `30` seconds |
+| `token_cache.enabled` | `SNELSTART_TOKEN_CACHE` | `true` |
+| `token_cache.store` | `SNELSTART_TOKEN_CACHE_STORE` | none: the default cache store |
 | `token_url` | `SNELSTART_TOKEN_URL` | `https://auth.snelstart.nl/b2b/token` |
 
-A trailing slash on the base URL is removed.
+A trailing slash on the base URL is removed. A timeout that is not a positive number gives the default.
 
-In your own code, read the settings through `Darvis\Snelstart\Support\SnelstartConfig` (`baseUrl()`, `clientKey()`, `subscriptionKey()`, `tokenUrl()`); the defaults live there.
+The access token is kept in the cache, encrypted with your `APP_KEY`, so not every web request fetches its own. Set `SNELSTART_TOKEN_CACHE=false` to keep it in memory only, or `SNELSTART_TOKEN_CACHE_STORE` to a store from `config/cache.php` to keep it out of the default store. See [How it works](concepts.md).
+
+If you published the config file before these keys existed, you don't have to add them: Laravel merges the package file underneath yours, so the defaults and the environment variables work as they are.
+
+In your own code, read the settings through `Darvis\Snelstart\Support\SnelstartConfig` (`baseUrl()`, `clientKey()`, `connectTimeout()`, `subscriptionKey()`, `timeout()`, `tokenCacheEnabled()`, `tokenCacheStore()`, `tokenUrl()`); the defaults live there.
 
 ## Check the connection
 

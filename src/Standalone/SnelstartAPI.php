@@ -26,7 +26,24 @@ class SnelstartAPI
     protected ?DateTime $tokenExpiresAt = null;
 
     /**
-     * @param  array<string, mixed>  $config  base_url, token_url, client_key and subscription_key
+     * True when the token in memory was fetched from the token endpoint during the current call,
+     * false when it was held from an earlier call.
+     */
+    protected bool $tokenIsFresh = false;
+
+    /**
+     * Seconds for a whole request, the token request included. The default of the Laravel client.
+     */
+    protected float $timeout = 30.0;
+
+    /**
+     * Seconds to wait for the connection. The default of the Laravel client.
+     */
+    protected float $connectTimeout = 10.0;
+
+    /**
+     * @param  array<string, mixed>  $config  base_url, token_url, client_key, subscription_key,
+     *                                        timeout and connect_timeout (seconds, default 30 and 10)
      */
     public function __construct(array $config)
     {
@@ -34,6 +51,8 @@ class SnelstartAPI
         $this->tokenUrl = $config['token_url'] ?? 'https://auth.snelstart.nl/b2b/token';
         $this->clientKey = $config['client_key'] ?? '';
         $this->subscriptionKey = $config['subscription_key'] ?? null;
+        $this->timeout = self::positiveNumber($config['timeout'] ?? null, 30.0);
+        $this->connectTimeout = self::positiveNumber($config['connect_timeout'] ?? null, 10.0);
 
         if (empty($this->tokenUrl) || empty($this->clientKey)) {
             throw new \RuntimeException(
@@ -52,6 +71,8 @@ class SnelstartAPI
             'token_url' => getenv('SNELSTART_TOKEN_URL') ?: 'https://auth.snelstart.nl/b2b/token',
             'client_key' => getenv('SNELSTART_CLIENT_KEY') ?: '',
             'subscription_key' => getenv('SNELSTART_SUBSCRIPTION_KEY') ?: null,
+            'timeout' => getenv('SNELSTART_TIMEOUT') ?: null,
+            'connect_timeout' => getenv('SNELSTART_CONNECT_TIMEOUT') ?: null,
         ]);
     }
 
@@ -185,6 +206,40 @@ class SnelstartAPI
      */
     protected function request(string $method, string $uri, array $options = []): array
     {
+        [$httpCode, $response] = $this->sendRequest($method, $uri, $options);
+
+        // A 401 on a token that was held: SnelStart dropped it before it expired. Get a new one and
+        // repeat the call, once. A 401 on a token of a moment ago is not about the token.
+        if ($httpCode === 401 && ! $this->tokenIsFresh) {
+            $this->forgetToken();
+
+            [$httpCode, $response] = $this->sendRequest($method, $uri, $options);
+        }
+
+        if ($httpCode >= 400) {
+            $this->handleError($httpCode, $response);
+        }
+
+        if ($response === '') {
+            return [];
+        }
+
+        $decoded = json_decode($response, true);
+
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * Send one request with the current token, or with a new one when there is none.
+     *
+     * @param  non-empty-string  $method
+     * @param  array<string, mixed>  $options  'query' and 'json'
+     * @return array{0: int, 1: string} the HTTP status and the body
+     *
+     * @throws \RuntimeException when the server cannot be reached or does not answer in time
+     */
+    protected function sendRequest(string $method, string $uri, array $options = []): array
+    {
         $token = $this->getAccessToken();
         $url = $this->baseUrl.'/'.ltrim($uri, '/');
 
@@ -208,6 +263,7 @@ class SnelstartAPI
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+        $this->applyTimeouts($ch);
 
         if ($method === 'HEAD') {
             // A HEAD response announces a Content-Length but has no body. Without this cURL waits
@@ -228,25 +284,43 @@ class SnelstartAPI
             throw new \RuntimeException('cURL error: '.$error);
         }
 
-        $response = is_string($response) ? $response : '';
+        return [$httpCode, is_string($response) ? $response : ''];
+    }
 
-        if ($httpCode >= 400) {
-            $this->handleError($httpCode, $response);
-        }
+    /**
+     * Without these cURL waits for as long as the server keeps the connection open. The
+     * millisecond options are the same limits as CURLOPT_TIMEOUT and CURLOPT_CONNECTTIMEOUT, and
+     * allow half a second; NOSIGNAL is what libcurl needs for a limit below one second.
+     */
+    protected function applyTimeouts(\CurlHandle $ch): void
+    {
+        curl_setopt($ch, CURLOPT_NOSIGNAL, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT_MS, max(1, (int) round($this->timeout * 1000)));
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT_MS, max(1, (int) round($this->connectTimeout * 1000)));
+    }
 
-        if ($response === '') {
-            return [];
-        }
-
-        $decoded = json_decode($response, true);
-
-        return is_array($decoded) ? $decoded : [];
+    /**
+     * A timeout that is not a positive number is the default.
+     */
+    protected static function positiveNumber(mixed $value, float $default): float
+    {
+        return is_numeric($value) && (float) $value > 0 ? (float) $value : $default;
     }
 
     /* -----------------------------------------------------------------
      |  Token handling (grant_type = clientkey)
      | -----------------------------------------------------------------
      */
+
+    /**
+     * Drop the access token. The next call fetches a new one.
+     */
+    public function forgetToken(): void
+    {
+        $this->accessToken = null;
+        $this->tokenExpiresAt = null;
+        $this->tokenIsFresh = false;
+    }
 
     protected function getAccessToken(): string
     {
@@ -255,6 +329,8 @@ class SnelstartAPI
             $this->tokenExpiresAt !== null &&
             $this->tokenExpiresAt > new DateTime
         ) {
+            $this->tokenIsFresh = false;
+
             return $this->accessToken;
         }
 
@@ -278,6 +354,7 @@ class SnelstartAPI
             'Content-Type: application/x-www-form-urlencoded',
             'Accept: application/json',
         ]);
+        $this->applyTimeouts($ch);
 
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -303,6 +380,7 @@ class SnelstartAPI
         }
 
         $this->accessToken = (string) $data['access_token'];
+        $this->tokenIsFresh = true;
 
         $expiresIn = isset($data['expires_in']) ? (int) $data['expires_in'] : 3600;
         $this->tokenExpiresAt = (new DateTime)->modify('+'.($expiresIn - 60).' seconds');

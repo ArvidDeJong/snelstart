@@ -114,20 +114,6 @@ describe('authentication', function () {
         Http::assertSentCount(5);
     });
 
-    it('does not fetch a new token when the API answers 401 on a cached token', function () {
-        // Documented behaviour: a revoked token fails until it expires or the instance is forgotten.
-        $calls = 0;
-        $this->fakeSnelstart(function () use (&$calls) {
-            return ++$calls === 1 ? Http::response([]) : Http::response(['message' => 'Unauthorized'], 401);
-        });
-
-        $api = app(SnelstartAPI::class);
-        $api->getCompanyInfo();
-
-        expect(fn () => $api->getCompanyInfo())->toThrow(RuntimeException::class, 'HTTP status: 401');
-        Http::assertSentCount(3);
-    });
-
     it('throws when the token endpoint refuses the key, without calling the API', function () {
         Http::fake([
             'auth.snelstart.nl/*' => Http::response(['error' => 'invalid_grant'], 401),

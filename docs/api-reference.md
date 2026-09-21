@@ -22,11 +22,12 @@ The constructor reads the config and throws a `RuntimeException` when the token 
 | `put(string $uri, array $data = []): array` | `PUT` with a JSON body |
 | `delete(string $uri, array $query = []): array` | `DELETE` with a query string |
 | `head(string $uri, array $query = []): array` | `HEAD` with a query string, always returns `[]` |
+| `forgetToken(): void` | No request: drops the access token, in memory and in the cache |
 
 - `$uri` is relative to the base URL, with or without a leading slash.
 - An empty `$data` array sends no body at all.
 
-The class is not final. The protected members `request()`, `getAccessToken()`, `handleError()`, `redactSecrets()` and the properties `$baseUrl`, `$tokenUrl`, `$clientKey`, `$subscriptionKey`, `$accessToken` and `$tokenExpiresAt` are there for a subclass.
+The class is not final. The protected members `request()`, `sendRequest()`, `getAccessToken()`, `handleError()`, `redactSecrets()` and the properties `$baseUrl`, `$tokenUrl`, `$clientKey`, `$subscriptionKey`, `$timeout`, `$connectTimeout`, `$accessToken` and `$tokenExpiresAt` are there for a subclass.
 
 ## Darvis\Snelstart\Services\EchoService
 
@@ -67,12 +68,12 @@ On a failure:
 
 ## Darvis\Snelstart\Standalone\SnelstartAPI
 
-The same ten methods, plus:
+The same ten methods and `forgetToken()` (memory only, it has no cache), plus:
 
 | Method | What it does |
 | --- | --- |
-| `__construct(array $config)` | Keys `base_url`, `token_url`, `client_key`, `subscription_key`. The URLs fall back to the SnelStart URLs. |
-| `fromEnv(): self` | Reads `SNELSTART_BASE_URL`, `SNELSTART_TOKEN_URL`, `SNELSTART_CLIENT_KEY` and `SNELSTART_SUBSCRIPTION_KEY` with `getenv()`. |
+| `__construct(array $config)` | Keys `base_url`, `token_url`, `client_key`, `subscription_key`, `timeout` and `connect_timeout`. The URLs fall back to the SnelStart URLs, the timeouts to 30 and 10 seconds. |
+| `fromEnv(): self` | Reads `SNELSTART_BASE_URL`, `SNELSTART_TOKEN_URL`, `SNELSTART_CLIENT_KEY`, `SNELSTART_SUBSCRIPTION_KEY`, `SNELSTART_TIMEOUT` and `SNELSTART_CONNECT_TIMEOUT` with `getenv()`. |
 
 See [Standalone client](standalone.md).
 
@@ -82,7 +83,11 @@ See [Standalone client](standalone.md).
 | --- | --- |
 | `baseUrl(): string` | `snelstart.base_url` without a trailing slash, default `https://b2bapi.snelstart.nl/v2` |
 | `clientKey(): string` | `snelstart.client_key`, or an empty string |
+| `connectTimeout(): float` | `snelstart.connect_timeout` in seconds, `10.0` when it is not a positive number |
 | `subscriptionKey(): ?string` | `snelstart.subscription_key`, or `null` when it is empty |
+| `timeout(): float` | `snelstart.timeout` in seconds, `30.0` when it is not a positive number |
+| `tokenCacheEnabled(): bool` | `snelstart.token_cache.enabled`, `true` unless it is a no (`false`, `0`, `off`, `no`) |
+| `tokenCacheStore(): ?string` | `snelstart.token_cache.store`, or `null` for the default cache store |
 | `tokenUrl(): string` | `snelstart.token_url`, default `https://auth.snelstart.nl/b2b/token` |
 
 ## Container bindings

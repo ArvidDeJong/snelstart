@@ -6,8 +6,13 @@ namespace Darvis\Snelstart\Services;
 
 use Carbon\Carbon;
 use Darvis\Snelstart\Support\SnelstartConfig;
+use Illuminate\Contracts\Cache\Repository;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Client for the SnelStart B2B API inside a Laravel application. It reads its settings from the
@@ -28,12 +33,32 @@ class SnelstartAPI
 
     protected ?Carbon $tokenExpiresAt = null;
 
+    /**
+     * True when the token in memory was fetched from the token endpoint during the current call,
+     * false when it was held from an earlier call or came from the cache.
+     */
+    protected bool $tokenIsFresh = false;
+
+    protected float $timeout;
+
+    protected float $connectTimeout;
+
+    protected bool $tokenCacheEnabled;
+
+    protected ?string $tokenCacheStore;
+
+    protected bool $tokenCacheWarningLogged = false;
+
     public function __construct()
     {
         $this->baseUrl = SnelstartConfig::baseUrl();
         $this->tokenUrl = SnelstartConfig::tokenUrl();
         $this->clientKey = SnelstartConfig::clientKey();
         $this->subscriptionKey = SnelstartConfig::subscriptionKey();
+        $this->timeout = SnelstartConfig::timeout();
+        $this->connectTimeout = SnelstartConfig::connectTimeout();
+        $this->tokenCacheEnabled = SnelstartConfig::tokenCacheEnabled();
+        $this->tokenCacheStore = SnelstartConfig::tokenCacheStore();
 
         if (! $this->tokenUrl || ! $this->clientKey) {
             throw new \RuntimeException(
@@ -196,22 +221,15 @@ class SnelstartAPI
      */
     protected function request(string $method, string $uri, array $options = []): array
     {
-        $token = $this->getAccessToken();
+        $response = $this->sendRequest($method, $uri, $options);
 
-        $request = Http::withToken($token)
-            ->baseUrl($this->baseUrl)
-            ->acceptJson();
+        // A 401 on a token that was held or cached: SnelStart dropped it before it expired. Get a
+        // new one and repeat the call, once. A 401 on a token of a moment ago is not about the token.
+        if ($response->status() === 401 && ! $this->tokenIsFresh) {
+            $this->forgetToken();
 
-        if (! empty($this->subscriptionKey)) {
-            $request = $request->withHeaders([
-                'Ocp-Apim-Subscription-Key' => $this->subscriptionKey,
-            ]);
+            $response = $this->sendRequest($method, $uri, $options);
         }
-
-        $uri = '/'.ltrim($uri, '/');
-
-        /** @var Response $response */
-        $response = $request->send($method, $uri, $options);
 
         if ($response->failed()) {
             $this->handleError($response);
@@ -223,10 +241,52 @@ class SnelstartAPI
         return is_array($data) ? $data : [];
     }
 
+    /**
+     * Send one request with the current token, or with a new one when there is none.
+     *
+     * @param  array<string, mixed>  $options  'query' and 'json'
+     */
+    protected function sendRequest(string $method, string $uri, array $options = []): Response
+    {
+        $token = $this->getAccessToken();
+
+        $request = $this->withTimeouts(Http::withToken($token))
+            ->baseUrl($this->baseUrl)
+            ->acceptJson();
+
+        if (! empty($this->subscriptionKey)) {
+            $request = $request->withHeaders([
+                'Ocp-Apim-Subscription-Key' => $this->subscriptionKey,
+            ]);
+        }
+
+        return $request->send($method, '/'.ltrim($uri, '/'), $options);
+    }
+
+    protected function withTimeouts(PendingRequest $request): PendingRequest
+    {
+        return $request->withOptions([
+            'connect_timeout' => $this->connectTimeout,
+            'timeout' => $this->timeout,
+        ]);
+    }
+
     /* -----------------------------------------------------------------
      |  Token handling (grant_type = clientkey)
      | -----------------------------------------------------------------
      */
+
+    /**
+     * Drop the access token, in memory and in the cache. The next call fetches a new one.
+     */
+    public function forgetToken(): void
+    {
+        $this->accessToken = null;
+        $this->tokenExpiresAt = null;
+        $this->tokenIsFresh = false;
+
+        $this->tokenCache(fn (Repository $cache) => $cache->forget($this->tokenCacheKey()));
+    }
 
     protected function getAccessToken(): string
     {
@@ -235,7 +295,17 @@ class SnelstartAPI
             $this->tokenExpiresAt !== null &&
             $this->tokenExpiresAt->isFuture()
         ) {
+            $this->tokenIsFresh = false;
+
             return $this->accessToken;
+        }
+
+        $cached = $this->restoreTokenFromCache();
+
+        if ($cached !== null) {
+            $this->tokenIsFresh = false;
+
+            return $cached;
         }
 
         // SnelStart-specific authentication flow:
@@ -245,7 +315,7 @@ class SnelstartAPI
             'clientkey' => $this->clientKey,
         ];
 
-        $response = Http::asForm()
+        $response = $this->withTimeouts(Http::asForm())
             ->acceptJson()
             ->post($this->tokenUrl, $payload);
 
@@ -259,12 +329,115 @@ class SnelstartAPI
             throw new \RuntimeException('Snelstart token response does not contain access_token.');
         }
 
-        $this->accessToken = (string) $data['access_token'];
+        $token = (string) $data['access_token'];
+
+        $this->accessToken = $token;
+        $this->tokenIsFresh = true;
 
         $expiresIn = isset($data['expires_in']) ? (int) $data['expires_in'] : 3600;
         $this->tokenExpiresAt = Carbon::now()->addSeconds($expiresIn - 60);
 
-        return $this->accessToken;
+        $this->storeTokenInCache();
+
+        return $token;
+    }
+
+    /**
+     * The key differs per token URL and per client key, so two administrations never share a
+     * token. Both are hashed: a cache key is readable for whoever can list the store.
+     */
+    protected function tokenCacheKey(): string
+    {
+        return 'snelstart.token.'.hash('sha256', $this->tokenUrl.'|'.$this->clientKey);
+    }
+
+    /**
+     * Take the token from the cache into memory and return it, or null. Anything that is not a token this application encrypted, and
+     * that is still valid, counts as no token and is removed.
+     */
+    protected function restoreTokenFromCache(): ?string
+    {
+        $cached = $this->tokenCache(fn (Repository $cache) => $cache->get($this->tokenCacheKey()));
+
+        if ($cached === null) {
+            return null;
+        }
+
+        try {
+            $data = is_string($cached) ? json_decode(Crypt::decryptString($cached), true) : null;
+        } catch (\Throwable) {
+            // Encrypted with another APP_KEY, or not encrypted at all.
+            $data = null;
+        }
+
+        if (
+            is_array($data) &&
+            is_string($data['access_token'] ?? null) &&
+            $data['access_token'] !== '' &&
+            is_int($data['expires_at'] ?? null) &&
+            $data['expires_at'] > Carbon::now()->getTimestamp()
+        ) {
+            $this->accessToken = $data['access_token'];
+            $this->tokenExpiresAt = Carbon::createFromTimestamp($data['expires_at']);
+
+            return $this->accessToken;
+        }
+
+        $this->tokenCache(fn (Repository $cache) => $cache->forget($this->tokenCacheKey()));
+
+        return null;
+    }
+
+    /**
+     * Put the token in the cache, encrypted, for as long as the instance itself would keep it.
+     */
+    protected function storeTokenInCache(): void
+    {
+        if ($this->accessToken === null || $this->tokenExpiresAt === null || ! $this->tokenExpiresAt->isFuture()) {
+            return;
+        }
+
+        $token = $this->accessToken;
+        $expiresAt = $this->tokenExpiresAt->getTimestamp();
+
+        // Whole seconds, counted here: how a cache repository turns a date into a number of seconds
+        // differs between Laravel and Carbon versions, and rounding down costs the last second.
+        $seconds = $expiresAt - Carbon::now()->getTimestamp();
+
+        if ($seconds < 1) {
+            return;
+        }
+
+        $this->tokenCache(fn (Repository $cache) => $cache->put(
+            $this->tokenCacheKey(),
+            Crypt::encryptString((string) json_encode(['access_token' => $token, 'expires_at' => $expiresAt])),
+            $seconds,
+        ));
+    }
+
+    /**
+     * Run something against the token cache. The cache only saves a token request: when it is
+     * turned off, or the store is down or does not exist, the client works from memory.
+     *
+     * @param  callable(Repository): mixed  $callback
+     */
+    protected function tokenCache(callable $callback): mixed
+    {
+        if (! $this->tokenCacheEnabled) {
+            return null;
+        }
+
+        try {
+            return $callback(Cache::store($this->tokenCacheStore));
+        } catch (\Throwable $e) {
+            if (! $this->tokenCacheWarningLogged) {
+                $this->tokenCacheWarningLogged = true;
+
+                Log::warning('Snelstart token cache is not available, the token is kept in memory only: '.$this->redactSecrets($e->getMessage()));
+            }
+
+            return null;
+        }
     }
 
     /* -----------------------------------------------------------------

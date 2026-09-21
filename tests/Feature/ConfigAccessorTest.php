@@ -44,9 +44,61 @@ test('an empty subscription key counts as no subscription key', function () {
     expect(SnelstartConfig::subscriptionKey())->toBe('test-subscription-key');
 });
 
-test('the config file keeps every key of 1.0', function () {
-    expect(array_keys(require snelstartRoot('config/snelstart.php')))
-        ->toBe(['base_url', 'client_key', 'subscription_key', 'token_url']);
+test('the config file keeps every key of 1.0 and 1.1', function () {
+    $config = require snelstartRoot('config/snelstart.php');
+
+    expect(array_keys($config))
+        ->toBe(['base_url', 'client_key', 'connect_timeout', 'subscription_key', 'timeout', 'token_cache', 'token_url'])
+        ->and(array_keys($config['token_cache']))->toBe(['enabled', 'store']);
+});
+
+test('the timeouts are thirty and ten seconds, and anything that is not a positive number is the default', function () {
+    $config = require snelstartRoot('config/snelstart.php');
+
+    expect($config['timeout'])->toBe(30)
+        ->and($config['connect_timeout'])->toBe(10)
+        ->and(SnelstartConfig::timeout())->toBe(30.0)
+        ->and(SnelstartConfig::connectTimeout())->toBe(10.0);
+
+    config(['snelstart.timeout' => '45', 'snelstart.connect_timeout' => 2.5]);
+    expect(SnelstartConfig::timeout())->toBe(45.0)
+        ->and(SnelstartConfig::connectTimeout())->toBe(2.5);
+
+    foreach ([0, -1, 'abc', '', null, true, []] as $value) {
+        config(['snelstart.timeout' => $value, 'snelstart.connect_timeout' => $value]);
+
+        expect(SnelstartConfig::timeout())->toBe(30.0)
+            ->and(SnelstartConfig::connectTimeout())->toBe(10.0);
+    }
+});
+
+test('the token cache is on by default, and reads a yes or a no from the environment', function () {
+    $config = require snelstartRoot('config/snelstart.php');
+
+    expect($config['token_cache'])->toBe(['enabled' => true, 'store' => null])
+        ->and(SnelstartConfig::tokenCacheEnabled())->toBeTrue()
+        ->and(SnelstartConfig::tokenCacheStore())->toBeNull();
+
+    foreach ([false, 'false', '0', 0, 'off', 'no'] as $value) {
+        config(['snelstart.token_cache.enabled' => $value]);
+        expect(SnelstartConfig::tokenCacheEnabled())->toBeFalse();
+    }
+
+    foreach ([true, 'true', '1', 1, 'on', null, '', 'maybe', []] as $value) {
+        config(['snelstart.token_cache.enabled' => $value]);
+        expect(SnelstartConfig::tokenCacheEnabled())->toBeTrue();
+    }
+
+    config(['snelstart' => []]);
+    expect(SnelstartConfig::tokenCacheEnabled())->toBeTrue();
+});
+
+test('an empty cache store name is the default store', function () {
+    config(['snelstart.token_cache.store' => '']);
+    expect(SnelstartConfig::tokenCacheStore())->toBeNull();
+
+    config(['snelstart.token_cache.store' => 'redis']);
+    expect(SnelstartConfig::tokenCacheStore())->toBe('redis');
 });
 
 test('nothing outside the accessor reads the package config', function () {
