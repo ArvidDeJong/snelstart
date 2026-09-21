@@ -74,7 +74,10 @@ test('Blade examples are wrapped in raw, so Liquid does not eat them', function 
         // Strip the raw blocks; whatever Liquid is left would be rendered away.
         $stripped = (string) preg_replace('/\{% raw %\}.*?\{% endraw %\}/s', '', $body);
 
-        expect($stripped)->not->toContain('{{', $name.': wrap this Blade in {% raw %} ... {% endraw %}');
+        // Not ->not->toContain($needle, $message): toContain() reads a second argument as another
+        // needle, and the negated check then passes whatever the page holds.
+        expect(str_contains($stripped, '{{'))
+            ->toBeFalse($name.': wrap this Blade in {% raw %} ... {% endraw %}');
     }
 });
 
@@ -160,8 +163,8 @@ test('the YAML files build, because one bad value fails the whole Pages build', 
 
 test('every link to the source points at GitHub, because the site has no src directory', function () {
     foreach (glob(docsPath('*.md')) as $page) {
-        expect(file_get_contents($page))
-            ->not->toContain('](../', basename($page).': link to the file on GitHub, a relative path leaves the site');
+        expect(str_contains((string) file_get_contents($page), '](../'))
+            ->toBeFalse(basename($page).': link to the file on GitHub, a relative path leaves the site');
     }
 });
 
