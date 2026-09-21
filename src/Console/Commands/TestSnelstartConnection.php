@@ -24,24 +24,35 @@ class TestSnelstartConnection extends Command
     /**
      * Execute the console command.
      */
-    public function handle(SnelstartAPI $snelstart): int
+    public function handle(): int
     {
         $this->info('Testing Snelstart API connection...');
 
         try {
+            // The client is resolved here and not injected: its constructor throws when the client
+            // key is missing, and that has to end up in the catch below instead of in a stack trace.
+            $snelstart = $this->laravel->make(SnelstartAPI::class);
+
             // Test the connection by retrieving company info
             $companyInfo = $snelstart->getCompanyInfo();
-            
+
             $this->info('✓ Connection successful!');
-            
-            if (!empty($companyInfo)) {
+
+            if (! empty($companyInfo)) {
                 $this->info('Company info retrieved.');
-                $this->line(json_encode($companyInfo, JSON_PRETTY_PRINT));
+
+                // This prints the company data of the administration. The package never prints a key or a token.
+                $json = json_encode($companyInfo, JSON_PRETTY_PRINT);
+
+                if ($json !== false) {
+                    $this->line($json);
+                }
             }
-            
+
             return Command::SUCCESS;
         } catch (\Exception $e) {
-            $this->error('✗ Connection failed: ' . $e->getMessage());
+            $this->error('✗ Connection failed: '.$e->getMessage());
+
             return Command::FAILURE;
         }
     }

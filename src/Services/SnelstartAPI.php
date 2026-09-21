@@ -5,9 +5,15 @@ declare(strict_types=1);
 namespace Darvis\Snelstart\Services;
 
 use Carbon\Carbon;
+use Darvis\Snelstart\Support\SnelstartConfig;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 
+/**
+ * Client for the SnelStart B2B API inside a Laravel application. It reads its settings from the
+ * package config and sends its requests with Laravel's HTTP client, so host apps fake it with
+ * Http::fake(). Projects without Laravel use Darvis\Snelstart\Standalone\SnelstartAPI.
+ */
 class SnelstartAPI
 {
     protected string $baseUrl;
@@ -24,10 +30,10 @@ class SnelstartAPI
 
     public function __construct()
     {
-        $this->baseUrl = rtrim((string) config('snelstart.base_url'), '/');
-        $this->tokenUrl = (string) config('snelstart.token_url');
-        $this->clientKey = (string) config('snelstart.client_key');
-        $this->subscriptionKey = config('snelstart.subscription_key');
+        $this->baseUrl = SnelstartConfig::baseUrl();
+        $this->tokenUrl = SnelstartConfig::tokenUrl();
+        $this->clientKey = SnelstartConfig::clientKey();
+        $this->subscriptionKey = SnelstartConfig::subscriptionKey();
 
         if (! $this->tokenUrl || ! $this->clientKey) {
             throw new \RuntimeException(
@@ -41,26 +47,55 @@ class SnelstartAPI
      | -----------------------------------------------------------------
      */
 
+    /**
+     * GET /companyInfo: the administration the keys belong to.
+     *
+     * @return array<mixed>
+     */
     public function getCompanyInfo(): array
     {
         return $this->get('/companyInfo');
     }
 
+    /**
+     * GET /relaties: the relations (customers and suppliers).
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<mixed>
+     */
     public function getRelaties(array $query = []): array
     {
         return $this->get('/relaties', $query);
     }
 
+    /**
+     * POST /relaties: create a relation.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<mixed>
+     */
     public function createRelatie(array $data): array
     {
         return $this->post('/relaties', $data);
     }
 
+    /**
+     * GET /artikelen: the articles.
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<mixed>
+     */
     public function getArtikelen(array $query = []): array
     {
         return $this->get('/artikelen', $query);
     }
 
+    /**
+     * POST /verkooporders: create a sales order.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<mixed>
+     */
     public function createVerkooporder(array $data): array
     {
         return $this->post('/verkooporders', $data);
@@ -71,6 +106,12 @@ class SnelstartAPI
      | -----------------------------------------------------------------
      */
 
+    /**
+     * GET any endpoint below the base URL.
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<mixed>
+     */
     public function get(string $uri, array $query = []): array
     {
         $options = [];
@@ -81,6 +122,12 @@ class SnelstartAPI
         return $this->request('GET', $uri, $options);
     }
 
+    /**
+     * POST to any endpoint below the base URL. An empty array sends no body.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<mixed>
+     */
     public function post(string $uri, array $data = []): array
     {
         $options = [];
@@ -91,6 +138,12 @@ class SnelstartAPI
         return $this->request('POST', $uri, $options);
     }
 
+    /**
+     * PUT to any endpoint below the base URL. An empty array sends no body.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<mixed>
+     */
     public function put(string $uri, array $data = []): array
     {
         $options = [];
@@ -101,6 +154,12 @@ class SnelstartAPI
         return $this->request('PUT', $uri, $options);
     }
 
+    /**
+     * DELETE any endpoint below the base URL.
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<mixed>
+     */
     public function delete(string $uri, array $query = []): array
     {
         $options = [];
@@ -111,6 +170,12 @@ class SnelstartAPI
         return $this->request('DELETE', $uri, $options);
     }
 
+    /**
+     * HEAD any endpoint below the base URL. The result is always an empty array.
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<mixed>
+     */
     public function head(string $uri, array $query = []): array
     {
         $options = [];
@@ -123,6 +188,11 @@ class SnelstartAPI
 
     /**
      * Central request method: automatically adds Bearer token + subscription key.
+     *
+     * @param  array<string, mixed>  $options  'query' and 'json'
+     * @return array<mixed>
+     *
+     * @throws \RuntimeException when the API answers with a 4xx or 5xx status
      */
     protected function request(string $method, string $uri, array $options = []): array
     {
@@ -147,7 +217,10 @@ class SnelstartAPI
             $this->handleError($response);
         }
 
-        return $response->json() ?? [];
+        // A body that is valid JSON but not an object or a list ("ok", 42, true) is not an array.
+        $data = $response->json();
+
+        return is_array($data) ? $data : [];
     }
 
     /* -----------------------------------------------------------------
@@ -213,6 +286,29 @@ class SnelstartAPI
             $message .= ' Response: '.$body;
         }
 
-        throw new \RuntimeException($message);
+        throw new \RuntimeException($this->redactSecrets($message));
+    }
+
+    /**
+     * Replace the client key, the subscription key and the access token in a message. An error
+     * response can echo what was sent, and the message ends up in logs and in command output.
+     */
+    protected function redactSecrets(string $message): string
+    {
+        $search = [];
+
+        foreach ([$this->clientKey, $this->subscriptionKey, $this->accessToken] as $secret) {
+            if (! is_string($secret) || $secret === '') {
+                continue;
+            }
+
+            // As it is, as it looks inside a JSON string, and as it looks in a form body or a URL.
+            $search[] = $secret;
+            $search[] = trim((string) json_encode($secret), '"');
+            $search[] = urlencode($secret);
+            $search[] = rawurlencode($secret);
+        }
+
+        return str_replace(array_unique($search), '[redacted]', $message);
     }
 }

@@ -2,10 +2,9 @@
 
 namespace Darvis\Snelstart;
 
-use Darvis\Snelstart\Services\SnelstartAPI;
-use Darvis\Snelstart\Services\EchoService;
 use Darvis\Snelstart\Console\Commands\TestSnelstartConnection;
-use Darvis\Snelstart\Facades\Snelstart;
+use Darvis\Snelstart\Services\EchoService;
+use Darvis\Snelstart\Services\SnelstartAPI;
 use Illuminate\Support\ServiceProvider;
 
 class SnelstartServiceProvider extends ServiceProvider
@@ -20,7 +19,7 @@ class SnelstartServiceProvider extends ServiceProvider
         );
 
         $this->app->singleton(SnelstartAPI::class, function ($app) {
-            return new SnelstartAPI();
+            return new SnelstartAPI;
         });
 
         $this->app->singleton(EchoService::class, function ($app) {
