@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue
+    url: https://github.com/ArvidDeJong/snelstart/security/advisories/new
+    about: Report a vulnerability privately, for example a way to leak the client key or the subscription key.
+  - name: Documentation
+    url: https://arviddejong.github.io/snelstart/
+    about: Installation, quick start, how it works, the API reference and the standalone client.
