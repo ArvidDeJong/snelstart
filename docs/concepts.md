@@ -24,6 +24,7 @@ description: "How darvis/snelstart authenticates, where the access token is cach
 - `php artisan cache:clear` removes the token with everything else. The next call fetches a new one; nothing else happens.
 - When the cache store is down, does not exist, or the application has no `APP_KEY`, the client logs one warning (`Snelstart token cache is not available, the token is kept in memory only: ...`) and works from memory.
 - `$snelstart->forgetToken()` drops the token on purpose, in memory and in the cache.
+- **One request fetches, the others wait.** When the cache has no token, the client takes a lock on the same cache store before it calls the token endpoint, and looks in the cache once more when it has the lock. Requests that arrive together on a cold cache wait at most five seconds for the first one and then use its token, so there is one token request instead of one per request. A store without locks, a lock that does not come free in those five seconds or a lock that fails: the client fetches a token without the lock. The lock never fails a call.
 
 | Setting | Environment variable | Default |
 | --- | --- | --- |
@@ -32,7 +33,7 @@ description: "How darvis/snelstart authenticates, where the access token is cach
 
 With `SNELSTART_TOKEN_CACHE=false` the token only lives in memory, on the instance, as it did up to 1.1: every web request fetches its own.
 
-The standalone client has no cache; its token lives on the instance.
+The standalone client has no cache and no lock; its token lives on the instance.
 
 ## A refused token: one new token, one repeat
 
@@ -62,7 +63,7 @@ Both are in seconds, and `2.5` is allowed. A value that is not a positive number
 | 2xx with a JSON object or list | The decoded array |
 | 2xx with an empty body (204, `HEAD`) | `[]` |
 | 2xx with a body that is not a JSON object or list | `[]` |
-| 4xx or 5xx | `RuntimeException` |
+| 4xx or 5xx | `SnelstartException` with that status |
 
 ## What a failure looks like
 
@@ -73,10 +74,12 @@ Snelstart token response does not contain access_token.
 Snelstart API config is incomplete (token_url, client_key).
 ```
 
-- All four are a plain `RuntimeException`; the exception code is `0`, the HTTP status is only in the message.
+- All four are a `Darvis\Snelstart\Exceptions\SnelstartException`, which extends `RuntimeException`. The messages are the ones above, so a `catch (\RuntimeException $e)` and a match on the text keep working.
+- **Read the status, don't parse the message.** `$e->status()`, and `$e->getCode()`, give the HTTP status of the response that caused the exception: 429 and 401 for the first two lines, the status of the 2xx token response for the third, and `0` for the fourth, because there was no response.
+- The response body is not a property of the exception. It can hold data of the administration; the message has the part that was always there, with the keys redacted.
 - **A 429 or a 5xx is not retried.** Retry from a queued job with a backoff.
-- In the Laravel client a timeout or a connection error is an `Illuminate\Http\Client\ConnectionException`. That class is not a `RuntimeException`, so catch it separately. The standalone client throws a `RuntimeException` with `cURL error: ...` for the same.
-- `EchoService` is the exception: it catches everything, writes `Snelstart Echo Resource GET failed: ...` to the log with `Log::error()` and returns an array with `success` set to `false`.
+- In the Laravel client a timeout or a connection error is an `Illuminate\Http\Client\ConnectionException`. That class is not a `RuntimeException` and not a `SnelstartException`, so catch it separately; the package leaves it as it is, because host apps catch that class. The standalone client throws a `SnelstartException` with `cURL error: ...` and status `0` for the same.
+- `EchoService` does not throw: it catches everything, writes `Snelstart Echo Resource GET failed: ...` to the log with `Log::error()` and returns an array with `success` set to `false`.
 
 ## Where the keys go
 

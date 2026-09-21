@@ -54,7 +54,7 @@ $relation = $snelstart->createRelatie(['naam' => 'Example B.V.']);
 $snelstart->put('/relaties/'.$relation['id'], $data);   // every other endpoint
 ```
 
-A failed call throws a `RuntimeException` with the HTTP status and the response body. A 429 or a 5xx is not retried, and a request gives up after 30 seconds (`SNELSTART_TIMEOUT`).
+A failed call throws a `SnelstartException`, a `RuntimeException` with the HTTP status in `$e->status()` and the response body in the message. A 429 or a 5xx is not retried, and a request gives up after 30 seconds (`SNELSTART_TIMEOUT`).
 
 Without Laravel:
 

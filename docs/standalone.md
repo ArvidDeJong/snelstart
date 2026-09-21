@@ -43,10 +43,11 @@ $snelstart = SnelstartAPI::fromEnv();
 | Fake in tests | `Http::fake()` | Not possible; point `base_url` and `token_url` at your own test server |
 | Timeout | 30 seconds, 10 to connect, from the config | 30 seconds, 10 to connect, from the array |
 | Access token | In memory and, encrypted, in Laravel's cache | In memory, on the instance |
-| Connection error | `Illuminate\Http\Client\ConnectionException` | `RuntimeException` with `cURL error: ...` |
+| Connection error | `Illuminate\Http\Client\ConnectionException`, unchanged | `SnelstartException` with `cURL error: ...` and status `0` |
+| Lock around the token request | Yes, on the cache store | No: there is no cache to share |
 | Error body in the message | JSON is decoded and encoded again | The body as it was received |
 
-The methods, the one repeat after a refused token, the messages of the exceptions and the redaction of the keys are the same. Inside Laravel, use the Laravel client: it is the one `snelstart:test` and `EchoService` use, and the only one your tests can fake.
+The methods, the one repeat after a refused token, the `SnelstartException` with its status and messages, and the redaction of the keys are the same. Inside Laravel, use the Laravel client: it is the one `snelstart:test` and `EchoService` use, and the only one your tests can fake.
 
 ## A call that needs more than 30 seconds
 

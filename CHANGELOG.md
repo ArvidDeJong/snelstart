@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `Darvis\Snelstart\Exceptions\SnelstartException`, which both clients now throw. It extends
+  `RuntimeException` and has the same messages, so every `catch (\RuntimeException $e)` and every match
+  on the text keeps working. `$e->status()` gives the HTTP status of the response that caused it, so
+  you no longer have to take it out of the message: retry a 429, give up on a 404. It is `0` when
+  there was no response: an incomplete config, or a cURL error in the standalone client. The response
+  body is not a property of the exception; it is where it always was, in the message, with the keys
+  redacted.
+- **A lock around the token request** in the Laravel client, when the token cache is on. Requests that
+  find the cache empty at the same moment, after a deploy or a `cache:clear`, used to fetch a token
+  each. One now fetches it; the others wait at most five seconds and use that token. Nothing to do and
+  nothing to configure. A cache store without locks, a lock that does not come free in time or a lock
+  that fails means the client fetches a token without the lock; the lock never fails a call. The
+  standalone client has no cache and so no lock.
+
+### Changed
+- **`getCode()` of the exceptions is the HTTP status instead of `0`**, and so is `error_code` in the
+  result of `EchoService`: `401`, `429`, `503`. It stays `0` when there was no response, such as a
+  timeout. If you compared either with `0` to mean "a SnelStart failure", compare with
+  `$result['success']` or catch `SnelstartException` instead. Error trackers that group by exception
+  class will start a new group for `SnelstartException`.
+- `Illuminate\Http\Client\ConnectionException` from the Laravel client is left exactly as it was: it
+  is not a `SnelstartException`. Keep catching it separately.
+
 ## [1.2.0] - 2026-09-21
 
 ### Added

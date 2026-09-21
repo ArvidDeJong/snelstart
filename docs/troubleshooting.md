@@ -8,6 +8,8 @@ description: "The messages darvis/snelstart can give, what causes them and what 
 
 Start with `php artisan snelstart:test`. It shows the same message your code would get.
 
+In code, read the HTTP status from the exception with `$e->status()` instead of taking it out of the message. It is `0` when there was no response at all.
+
 ## Snelstart API config is incomplete (token_url, client_key).
 
 `SNELSTART_CLIENT_KEY` is empty, or `token_url` was set to an empty value. When the config is cached, run `php artisan config:clear` after changing `.env`.
@@ -33,7 +35,7 @@ SnelStart refused the call because there were too many. The package does not wai
 
 ## Illuminate\Http\Client\ConnectionException, or cURL error: Operation timed out
 
-SnelStart could not be reached or did not answer within 30 seconds (10 to connect). Raise `SNELSTART_TIMEOUT` or `SNELSTART_CONNECT_TIMEOUT` (the `timeout` and `connect_timeout` keys of the standalone client) for a call that really needs longer. The Laravel client throws the `ConnectionException`, which is not a `RuntimeException`, so catch it separately. The standalone client throws a `RuntimeException` with the cURL message. A write that timed out may still have been processed by SnelStart, so check before you send it again.
+SnelStart could not be reached or did not answer within 30 seconds (10 to connect). Raise `SNELSTART_TIMEOUT` or `SNELSTART_CONNECT_TIMEOUT` (the `timeout` and `connect_timeout` keys of the standalone client) for a call that really needs longer. The Laravel client throws the `ConnectionException`, which is not a `RuntimeException`, so catch it separately. The standalone client throws a `SnelstartException` with the cURL message and status `0`. A write that timed out may still have been processed by SnelStart, so check before you send it again.
 
 ## An empty array comes back
 
@@ -44,6 +46,10 @@ SnelStart could not be reached or did not answer within 30 seconds (10 to connec
 ## Snelstart token cache is not available, the token is kept in memory only
 
 A warning in the log, once per process. The cache store could not be used: it is down, `SNELSTART_TOKEN_CACHE_STORE` names a store that is not in `config/cache.php`, or the application has no `APP_KEY` to encrypt the token with. The calls themselves work; every process fetches its own token until the cache is back.
+
+## A request waits up to five seconds before it calls SnelStart
+
+Another request holds the lock around the token request, and did not finish or release it. After five seconds the waiting request fetches its own token, so nothing fails. It happens when a token request itself is slow, or when a process died while holding the lock; the lock then runs out by itself after the timeout plus five seconds, two minutes at most.
 
 ## Every request still fetches a token
 

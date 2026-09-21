@@ -49,7 +49,7 @@ $relation = $snelstart->createRelatie(['naam' => 'Example B.V.']);
 $same = $snelstart->get('/relaties/'.$relation['id']);
 ```
 
-A failed call throws a `RuntimeException` with the HTTP status and the response body.
+A failed call throws a `SnelstartException`, a `RuntimeException` with the HTTP status in `$e->status()` and the response body in the message.
 
 ## Pages
 

@@ -8,7 +8,7 @@ description: "Every public method of the SnelStart client, the echo service, the
 
 ## Darvis\Snelstart\Services\SnelstartAPI
 
-The constructor reads the config and throws a `RuntimeException` when the token URL or the client key is empty. Every method returns an array and throws on a 4xx or 5xx, see [How it works](concepts.md).
+The constructor reads the config and throws a `SnelstartException` when the token URL or the client key is empty. Every method returns an array and throws on a 4xx or 5xx, see [How it works](concepts.md).
 
 | Method | Request |
 | --- | --- |
@@ -59,12 +59,12 @@ On a failure:
     'success' => false,
     'message' => 'Echo resource GET failed',
     'error' => 'Snelstart API call failed. HTTP status: 401. ...',
-    'error_code' => 0,
+    'error_code' => 401,
     'timestamp' => '2026-09-21T10:00:00.000000Z',
 ]
 ```
 
-`error_code` is the code of the exception, which is `0` for every failure of the client; it is not the HTTP status.
+`error_code` is the code of the exception: the HTTP status for a call SnelStart answered with a 4xx or 5xx, and `0` when there was no response, such as a timeout. Up to 1.2 it was always `0`.
 
 ## Darvis\Snelstart\Standalone\SnelstartAPI
 
@@ -76,6 +76,26 @@ The same ten methods and `forgetToken()` (memory only, it has no cache), plus:
 | `fromEnv(): self` | Reads `SNELSTART_BASE_URL`, `SNELSTART_TOKEN_URL`, `SNELSTART_CLIENT_KEY`, `SNELSTART_SUBSCRIPTION_KEY`, `SNELSTART_TIMEOUT` and `SNELSTART_CONNECT_TIMEOUT` with `getenv()`. |
 
 See [Standalone client](standalone.md).
+
+## Darvis\Snelstart\Exceptions\SnelstartException
+
+What both clients throw. It extends `RuntimeException` and has the message the plain `RuntimeException` had up to 1.2.
+
+| Method | Returns |
+| --- | --- |
+| `status(): int` | The HTTP status of the response that caused the exception, or `0` when there was no response |
+| `getCode()` | The same number |
+| `getMessage()` | `Snelstart API call failed. HTTP status: 429. Response: ...` and the other messages, with the keys redacted |
+
+| Thrown for | `status()` |
+| --- | --- |
+| A 4xx or 5xx of the API, also the second 401 after the repeat | that status |
+| A 4xx or 5xx of the token endpoint | that status |
+| A token response without `access_token` | the status of that response, `200` as a rule |
+| An incomplete config | `0` |
+| A cURL error in the standalone client (timeout, DNS, refused connection) | `0` |
+
+The response body is not available as a property. The Laravel client lets `Illuminate\Http\Client\ConnectionException` through unchanged; that is not a `SnelstartException`.
 
 ## Darvis\Snelstart\Support\SnelstartConfig
 
