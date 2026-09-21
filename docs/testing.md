@@ -77,8 +77,20 @@ Http::fake([
 ]);
 
 expect(fn () => app(SnelstartAPI::class)->getRelaties())
-    ->toThrow(RuntimeException::class, 'HTTP status: 429');
+    ->toThrow(SnelstartException::class, 'HTTP status: 429');
 ```
+
+To assert on the status itself, catch it:
+
+```php
+try {
+    app(SnelstartAPI::class)->getRelaties();
+} catch (SnelstartException $e) {
+    expect($e->status())->toBe(429);
+}
+```
+
+`SnelstartException` is `Darvis\Snelstart\Exceptions\SnelstartException`; an assertion on `RuntimeException::class` you already have still passes.
 
 For a timeout, throw from the fake:
 

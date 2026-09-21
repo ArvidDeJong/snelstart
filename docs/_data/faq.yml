@@ -26,13 +26,23 @@
 
 - q: What does the package do when a SnelStart call fails?
   a: >-
-    It throws a `RuntimeException` with the text `Snelstart API call failed. HTTP status: 429.
-    Response: ...`, with the response body behind it. A 429 or a 5xx is not retried; only a 401 on a token the client
+    It throws a `Darvis\Snelstart\Exceptions\SnelstartException`, which extends `RuntimeException`, with
+    the text `Snelstart API call failed. HTTP status: 429. Response: ...`. Read the HTTP status with
+    `$e->status()` or `$e->getCode()`; it is `0` when there was no response. A 429 or a 5xx is not retried; only a 401 on a token the client
     already had is repeated once, with a new token. Both clients give up after 30 seconds, 10 to
     connect (`SNELSTART_TIMEOUT`, `SNELSTART_CONNECT_TIMEOUT`). In the Laravel client a timeout or a
     DNS failure surfaces as `Illuminate\Http\Client\ConnectionException`,
-    which is not a `RuntimeException`. Only `EchoService` never throws; it returns `success` set to
+    which is not a `RuntimeException` and is left as it is. Only `EchoService` never throws; it returns
+    the status as `error_code` and `success` set to
     `false`.
+
+- q: How do I get the HTTP status of a failed SnelStart call?
+  a: >-
+    Catch `Darvis\Snelstart\Exceptions\SnelstartException` and call `$e->status()`; `$e->getCode()`
+    gives the same number. It is the status of the response that caused the exception, for example
+    401, 404 or 429, and `0` when there was no response, such as an incomplete config or a cURL error
+    in the standalone client. Up to version 1.2 the code was always `0` and the status was only in the
+    message; the message has not changed.
 
 - q: Can my SnelStart keys end up in a log file?
   a: >-

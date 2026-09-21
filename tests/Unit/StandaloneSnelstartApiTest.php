@@ -1,5 +1,6 @@
 <?php
 
+use Darvis\Snelstart\Exceptions\SnelstartException;
 use Darvis\Snelstart\Standalone\SnelstartAPI;
 
 /**
@@ -467,5 +468,73 @@ describe('timeouts', function () {
         }
 
         expect($timeouts)->toBe([7.0, 1.5]);
+    });
+});
+
+function standaloneCaught(Closure $call): Throwable
+{
+    try {
+        $call();
+    } catch (Throwable $e) {
+        return $e;
+    }
+
+    throw new LogicException('Expected an exception.');
+}
+
+describe('the status on the exception', function () {
+    it('is the status of the API response, with the message it always had', function (int $status) {
+        $e = standaloneCaught(fn () => standaloneClient(base: '/status/'.$status)->getRelaties());
+
+        expect($e)->toBeInstanceOf(SnelstartException::class)
+            ->toBeInstanceOf(RuntimeException::class)
+            ->and($e->getCode())->toBe($status)
+            ->and($e->status())->toBe($status)
+            ->and($e->getMessage())->toBe('Snelstart API call failed. HTTP status: '.$status.'. Response: {"message":"Something went wrong"}');
+    })->with([400, 401, 403, 404, 429, 500, 503]);
+
+    it('is the status of the token endpoint when that refuses the key', function () {
+        $e = standaloneCaught(fn () => standaloneClient('/token/401')->getCompanyInfo());
+
+        expect($e)->toBeInstanceOf(SnelstartException::class)
+            ->and($e->status())->toBe(401)
+            ->and($e->getMessage())->toBe('Failed to retrieve access_token from Snelstart. HTTP status: 401. Response: {"error":"invalid_grant"}');
+    });
+
+    it('is the status of a token response without an access_token', function () {
+        $e = standaloneCaught(fn () => standaloneClient('/token/empty')->getCompanyInfo());
+
+        expect($e)->toBeInstanceOf(SnelstartException::class)
+            ->and($e->status())->toBe(200)
+            ->and($e->getMessage())->toBe('Snelstart token response does not contain access_token.');
+    });
+
+    it('is 0 without a response: incomplete config, and a cURL error on either request', function () {
+        $config = standaloneCaught(fn () => new SnelstartAPI([]));
+        $api = standaloneCaught(fn () => (new SnelstartAPI(['base_url' => 'http://127.0.0.1:1/v2', 'token_url' => standaloneUrl('/token/ok'), 'client_key' => 'key']))->getCompanyInfo());
+        $token = standaloneCaught(fn () => (new SnelstartAPI(['token_url' => 'http://127.0.0.1:1/token', 'client_key' => 'key']))->getCompanyInfo());
+
+        foreach ([$config, $api, $token] as $e) {
+            expect($e)->toBeInstanceOf(SnelstartException::class)
+                ->and($e->status())->toBe(0);
+        }
+
+        expect($api->getMessage())->toStartWith('cURL error: ')
+            ->and($token->getMessage())->toStartWith('Failed to retrieve access_token: cURL error: ');
+    });
+
+    it('survives the new token and the repeat: the second 401 has status 401', function () {
+        $e = standaloneCaught(fn () => standaloneClientHolding('revoked-token', '/status/401')->getCompanyInfo());
+
+        expect(standaloneRequests())->toHaveCount(3)
+            ->and($e)->toBeInstanceOf(SnelstartException::class)
+            ->and($e->status())->toBe(401);
+    });
+
+    it('still redacts the keys in the message', function () {
+        $e = standaloneCaught(fn () => standaloneClient('/token/echo')->getCompanyInfo());
+
+        expect($e->status())->toBe(400)
+            ->and($e->getMessage())->toContain('clientkey=[redacted]')->not->toContain('base64');
     });
 });

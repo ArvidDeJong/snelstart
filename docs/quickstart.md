@@ -59,15 +59,22 @@ The path is relative to the base URL, with or without a leading slash.
 ## Catch a failure
 
 ```php
+use Darvis\Snelstart\Exceptions\SnelstartException;
 use Illuminate\Http\Client\ConnectionException;
 
 try {
     $snelstart->createVerkooporder($data);
 } catch (ConnectionException $e) {
     // SnelStart could not be reached, or the call timed out.
-} catch (\RuntimeException $e) {
-    // SnelStart answered with a 4xx or 5xx: the status and the body are in the message.
+} catch (SnelstartException $e) {
+    if ($e->status() === 429) {
+        // Too many calls: try again later.
+    }
+
+    // Any other 4xx or 5xx. The message has the status and the body, with the keys redacted.
 }
 ```
+
+`SnelstartException` extends `RuntimeException`, so a `catch (\RuntimeException $e)` you already have keeps working.
 
 Write to SnelStart from a queued job: a call can take seconds, and a job can be tried again.

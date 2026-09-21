@@ -17,20 +17,41 @@ Use this skill when code reads from or writes to SnelStart in an application tha
 4. A 401 on a token the client already had (memory or cache): it forgets the token, fetches a new one and repeats the request once.
 5. A 4xx or 5xx throws. Anything else is decoded and returned as an array. Every request has a timeout of 30 seconds, 10 to connect.
 
-| Situation | Result |
-| --- | --- |
-| 2xx, JSON object or list | the decoded array |
-| 2xx, empty body or `HEAD` | `[]` |
-| 2xx, body that is not a JSON object or list | `[]` |
-| 401 on a token the client already had | new token, the call is repeated once; a second 401 throws as below |
-| 401 on a token fetched for this call | not repeated, throws as below |
-| 4xx or 5xx (429 and 5xx are never retried) | `RuntimeException`: `Snelstart API call failed. HTTP status: <status>. Response: <body>` |
-| Token endpoint 4xx or 5xx (never retried) | `RuntimeException`: `Failed to retrieve access_token from Snelstart. HTTP status: <status>. Response: <body>` |
-| Token response without `access_token` | `RuntimeException`: `Snelstart token response does not contain access_token.` |
-| Timeout, DNS, refused connection | `Illuminate\Http\Client\ConnectionException` after `snelstart.timeout` (30) or `snelstart.connect_timeout` (10) seconds |
-| Cache store down, unknown store, no `APP_KEY` | one `Log::warning()` (`Snelstart token cache is not available, ...`), the token stays in memory, calls work |
-| Cached value that cannot be decrypted | treated as no token: removed, a new token is fetched, nothing throws |
-| No client key | `RuntimeException` when the client is built |
+| Situation | Result | `$e->status()` |
+| --- | --- | --- |
+| 2xx, JSON object or list | the decoded array | |
+| 2xx, empty body or `HEAD` | `[]` | |
+| 2xx, body that is not a JSON object or list | `[]` | |
+| 401 on a token the client already had | new token, the call is repeated once; a second 401 throws as below | `401` |
+| 401 on a token fetched for this call | not repeated, throws as below | `401` |
+| 4xx or 5xx (429 and 5xx are never retried) | `SnelstartException`: `Snelstart API call failed. HTTP status: <status>. Response: <body>` | that status |
+| Token endpoint 4xx or 5xx (never retried) | `SnelstartException`: `Failed to retrieve access_token from Snelstart. HTTP status: <status>. Response: <body>` | that status |
+| Token response without `access_token` | `SnelstartException`: `Snelstart token response does not contain access_token.` | the status of that response, `200` |
+| No client key | `SnelstartException` when the client is built | `0` |
+| Timeout, DNS, refused connection | `Illuminate\Http\Client\ConnectionException` after `snelstart.timeout` (30) or `snelstart.connect_timeout` (10) seconds; NOT a `SnelstartException` | none |
+| Cache store down, unknown store, no `APP_KEY`, a lock that throws | one `Log::warning()` (`Snelstart token cache is not available, ...`), the token stays in memory, calls work | |
+| Cached value that cannot be decrypted | treated as no token: removed, a new token is fetched, nothing throws | |
+| Another request is fetching a token | waits at most five seconds for its lock, then uses its token or fetches one itself | |
+| Cache store without lock support | no lock, no log line, calls work | |
+
+`Darvis\Snelstart\Exceptions\SnelstartException` extends `RuntimeException`; `status()` and `getCode()` are the HTTP status, `0` without a response. The messages are the same as before the class existed.
+
+```php
+use Darvis\Snelstart\Exceptions\SnelstartException;
+use Illuminate\Http\Client\ConnectionException;
+
+try {
+    $order = $snelstart->createVerkooporder($payload);
+} catch (ConnectionException $e) {
+    // No answer. The order may exist: look it up before sending it again.
+} catch (SnelstartException $e) {
+    match (true) {
+        $e->status() === 404 => $this->markRelationAsMissing(),
+        $e->status() === 429, $e->status() >= 500 => $this->release(300),
+        default => $this->fail($e),
+    };
+}
+```
 
 ## Scenarios
 
@@ -69,8 +90,9 @@ $snelstart->delete('/relaties/'.$id);
 
 ## Pitfalls
 
-- **Catching only `RuntimeException` misses timeouts.** `ConnectionException` does not extend it.
-- **`$e->getCode()` is always `0`.** The HTTP status is only in the message. `EchoService` returns that same `0` as `error_code`.
+- **Catching only `SnelstartException` or `RuntimeException` misses timeouts.** `ConnectionException` extends neither, and the package leaves it as it is.
+- **Don't parse the status out of the message.** `$e->status()` has it. `0` means there was no response (incomplete config), not "no error". `EchoService` returns the same number as `error_code`.
+- **The response body is only in the message**, not a property, and the message can hold data of the administration. Log it, don't show it to end users.
 - **Don't retry a 401 yourself.** The client already did, once, with a new token. A 401 that reaches your code is about the subscription key or the rights of the client key, and a loop around it only burns calls.
 - **Don't cache the token yourself**, and never put it in the session, the database or a log. The client keeps it encrypted in the cache; `forgetToken()` drops it, `php artisan cache:clear` does too and is harmless.
 - **The token cache needs a store that persists.** With the `array` or `null` store every request fetches its own token again. `SNELSTART_TOKEN_CACHE_STORE` picks another store.
@@ -121,6 +143,6 @@ Http::assertSent(fn ($request) => $request->hasHeader('Authorization', 'Bearer t
 - Set the client key before the client is resolved, or call `app()->forgetInstance(SnelstartAPI::class)` after changing it.
 - **The cached token.** On the `array` store (Laravel's `phpunit.xml` sets `CACHE_STORE=array`) every test starts without a token. On a store that persists, a token from one test is reused in the next: the token fake is not called and `Http::assertSentCount()` is one lower. Use `Cache::flush()` in `beforeEach`, set `SNELSTART_TOKEN_CACHE=false` in `phpunit.xml`, or call `app(SnelstartAPI::class)->forgetToken()`.
 - **A 401 fake is called twice** when an earlier call in the same test succeeded (the held token is replaced and the call repeated), and once when it is the first call.
-- A refused call: `Http::response(['message' => 'Too many requests'], 429)` and `->toThrow(RuntimeException::class, 'HTTP status: 429')`.
+- A refused call: `Http::response(['message' => 'Too many requests'], 429)` and `->toThrow(SnelstartException::class, 'HTTP status: 429')`; to assert on the number, catch it and `expect($e->status())->toBe(429)`.
 - A timeout: a fake that throws `new ConnectionException('cURL error 28')`.
 - An expired token: `$this->travel(1)->hours()` between two calls, then `Http::assertSentCount(4)`.
