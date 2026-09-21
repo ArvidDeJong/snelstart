@@ -86,7 +86,7 @@ it('never throws: a failed call is logged and returned as a result', function (s
     expect($result['success'])->toBeFalse()
         ->and($result['message'])->toBe("Echo resource {$verb} failed")
         ->and($result['error'])->toContain('HTTP status: 429')
-        ->and($result['error_code'])->toBe(0)
+        ->and($result['error_code'])->toBe(429)
         ->and($result)->toHaveKey('timestamp')
         ->and($lines)->toHaveCount(1)
         ->and($lines[0][0])->toBe('error')

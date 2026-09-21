@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Darvis\Snelstart\Services;
 
 use Carbon\Carbon;
+use Darvis\Snelstart\Exceptions\SnelstartException;
 use Darvis\Snelstart\Support\SnelstartConfig;
+use Illuminate\Contracts\Cache\Lock;
+use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
@@ -21,6 +25,16 @@ use Illuminate\Support\Facades\Log;
  */
 class SnelstartAPI
 {
+    /**
+     * Seconds a request waits for another request that is fetching a token.
+     */
+    protected const TOKEN_LOCK_WAIT_SECONDS = 5;
+
+    /**
+     * The longest the token lock is held, whatever the timeout is.
+     */
+    protected const TOKEN_LOCK_MAX_SECONDS = 120;
+
     protected string $baseUrl;
 
     protected string $tokenUrl;
@@ -61,7 +75,7 @@ class SnelstartAPI
         $this->tokenCacheStore = SnelstartConfig::tokenCacheStore();
 
         if (! $this->tokenUrl || ! $this->clientKey) {
-            throw new \RuntimeException(
+            throw new SnelstartException(
                 'Snelstart API config is incomplete (token_url, client_key).'
             );
         }
@@ -217,7 +231,7 @@ class SnelstartAPI
      * @param  array<string, mixed>  $options  'query' and 'json'
      * @return array<mixed>
      *
-     * @throws \RuntimeException when the API answers with a 4xx or 5xx status
+     * @throws SnelstartException when the API answers with a 4xx or 5xx status
      */
     protected function request(string $method, string $uri, array $options = []): array
     {
@@ -308,6 +322,37 @@ class SnelstartAPI
             return $cached;
         }
 
+        $lock = $this->acquireTokenLock();
+
+        try {
+            if ($lock !== null) {
+                // Another request may have fetched a token while this one waited for the lock.
+                $cached = $this->restoreTokenFromCache();
+
+                if ($cached !== null) {
+                    $this->tokenIsFresh = false;
+
+                    return $cached;
+                }
+            }
+
+            return $this->fetchAccessToken();
+        } finally {
+            if ($lock !== null) {
+                try {
+                    $lock->release();
+                } catch (\Throwable $e) {
+                    $this->warnThatTokenCacheIsNotAvailable($e);
+                }
+            }
+        }
+    }
+
+    /**
+     * Ask the token endpoint for a token, keep it in memory and put it in the cache.
+     */
+    protected function fetchAccessToken(): string
+    {
         // SnelStart-specific authentication flow:
         // grant_type=clientkey & clientkey=<custom-key>
         $payload = [
@@ -326,7 +371,7 @@ class SnelstartAPI
         $data = $response->json();
 
         if (! isset($data['access_token'])) {
-            throw new \RuntimeException('Snelstart token response does not contain access_token.');
+            throw new SnelstartException('Snelstart token response does not contain access_token.', $response->status());
         }
 
         $token = (string) $data['access_token'];
@@ -340,6 +385,42 @@ class SnelstartAPI
         $this->storeTokenInCache();
 
         return $token;
+    }
+
+    /**
+     * Take the lock that lets one request at a time fetch a token, so requests that find the cache
+     * empty at the same moment end up with one token request. Null means: go on without a lock.
+     * That is the answer when the token cache is off, when the store has no locks, when the lock
+     * is not free within the wait and when the lock throws; a lock never fails a call.
+     */
+    protected function acquireTokenLock(): ?Lock
+    {
+        if (! $this->tokenCacheEnabled) {
+            return null;
+        }
+
+        try {
+            $store = Cache::store($this->tokenCacheStore)->getStore();
+
+            if (! $store instanceof LockProvider) {
+                return null;
+            }
+
+            // Long enough for one token request with its timeout, so the lock does not run out
+            // halfway, and capped, so a lock that is never released does not stay for long.
+            $seconds = (int) min(static::TOKEN_LOCK_MAX_SECONDS, ceil($this->timeout) + 5);
+
+            $lock = $store->lock($this->tokenCacheKey().'.lock', max(1, $seconds));
+            $lock->block(static::TOKEN_LOCK_WAIT_SECONDS);
+
+            return $lock;
+        } catch (LockTimeoutException) {
+            return null;
+        } catch (\Throwable $e) {
+            $this->warnThatTokenCacheIsNotAvailable($e);
+
+            return null;
+        }
     }
 
     /**
@@ -430,14 +511,24 @@ class SnelstartAPI
         try {
             return $callback(Cache::store($this->tokenCacheStore));
         } catch (\Throwable $e) {
-            if (! $this->tokenCacheWarningLogged) {
-                $this->tokenCacheWarningLogged = true;
-
-                Log::warning('Snelstart token cache is not available, the token is kept in memory only: '.$this->redactSecrets($e->getMessage()));
-            }
+            $this->warnThatTokenCacheIsNotAvailable($e);
 
             return null;
         }
+    }
+
+    /**
+     * One warning per instance, however often the cache or its lock fails.
+     */
+    protected function warnThatTokenCacheIsNotAvailable(\Throwable $e): void
+    {
+        if ($this->tokenCacheWarningLogged) {
+            return;
+        }
+
+        $this->tokenCacheWarningLogged = true;
+
+        Log::warning('Snelstart token cache is not available, the token is kept in memory only: '.$this->redactSecrets($e->getMessage()));
     }
 
     /* -----------------------------------------------------------------
@@ -459,7 +550,7 @@ class SnelstartAPI
             $message .= ' Response: '.$body;
         }
 
-        throw new \RuntimeException($this->redactSecrets($message));
+        throw new SnelstartException($this->redactSecrets($message), $status);
     }
 
     /**

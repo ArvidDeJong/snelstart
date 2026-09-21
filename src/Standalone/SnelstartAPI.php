@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Darvis\Snelstart\Standalone;
 
+use Darvis\Snelstart\Exceptions\SnelstartException;
 use DateTime;
 
 /**
@@ -55,7 +56,7 @@ class SnelstartAPI
         $this->connectTimeout = self::positiveNumber($config['connect_timeout'] ?? null, 10.0);
 
         if (empty($this->tokenUrl) || empty($this->clientKey)) {
-            throw new \RuntimeException(
+            throw new SnelstartException(
                 'Snelstart API config is incomplete (token_url, client_key).'
             );
         }
@@ -202,7 +203,7 @@ class SnelstartAPI
      * @param  array<string, mixed>  $options  'query' and 'json'
      * @return array<mixed>
      *
-     * @throws \RuntimeException when the API answers with a 4xx or 5xx status
+     * @throws SnelstartException when the API answers with a 4xx or 5xx status
      */
     protected function request(string $method, string $uri, array $options = []): array
     {
@@ -236,7 +237,7 @@ class SnelstartAPI
      * @param  array<string, mixed>  $options  'query' and 'json'
      * @return array{0: int, 1: string} the HTTP status and the body
      *
-     * @throws \RuntimeException when the server cannot be reached or does not answer in time
+     * @throws SnelstartException when the server cannot be reached or does not answer in time
      */
     protected function sendRequest(string $method, string $uri, array $options = []): array
     {
@@ -281,7 +282,7 @@ class SnelstartAPI
         curl_close($ch);
 
         if ($error) {
-            throw new \RuntimeException('cURL error: '.$error);
+            throw new SnelstartException('cURL error: '.$error);
         }
 
         return [$httpCode, is_string($response) ? $response : ''];
@@ -337,7 +338,7 @@ class SnelstartAPI
         // SnelStart-specific authentication flow:
         // grant_type=clientkey & clientkey=<custom-key>
         if ($this->tokenUrl === '') {
-            throw new \RuntimeException('Snelstart API config is incomplete (token_url, client_key).');
+            throw new SnelstartException('Snelstart API config is incomplete (token_url, client_key).');
         }
 
         $payload = http_build_query([
@@ -362,21 +363,21 @@ class SnelstartAPI
         curl_close($ch);
 
         if ($error) {
-            throw new \RuntimeException('Failed to retrieve access_token: cURL error: '.$error);
+            throw new SnelstartException('Failed to retrieve access_token: cURL error: '.$error);
         }
 
         $response = is_string($response) ? $response : '';
 
         if ($httpCode >= 400) {
-            throw new \RuntimeException($this->redactSecrets(
+            throw new SnelstartException($this->redactSecrets(
                 'Failed to retrieve access_token from Snelstart. HTTP status: '.$httpCode.'. Response: '.$response
-            ));
+            ), (int) $httpCode);
         }
 
         $data = json_decode($response, true);
 
         if (! isset($data['access_token'])) {
-            throw new \RuntimeException('Snelstart token response does not contain access_token.');
+            throw new SnelstartException('Snelstart token response does not contain access_token.', (int) $httpCode);
         }
 
         $this->accessToken = (string) $data['access_token'];
@@ -401,7 +402,7 @@ class SnelstartAPI
             $message .= ' Response: '.$response;
         }
 
-        throw new \RuntimeException($this->redactSecrets($message));
+        throw new SnelstartException($this->redactSecrets($message), $httpCode);
     }
 
     /**
