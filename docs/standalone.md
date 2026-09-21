@@ -22,7 +22,7 @@ $company = $snelstart->getCompanyInfo();
 $relations = $snelstart->getRelaties();
 ```
 
-`base_url` and `token_url` are optional; they fall back to `https://b2bapi.snelstart.nl/v2` and `https://auth.snelstart.nl/b2b/token`. Without a `client_key` the constructor throws `Snelstart API config is incomplete (token_url, client_key).`
+`base_url` and `token_url` are optional; they fall back to `https://b2bapi.snelstart.nl/v2` and `https://auth.snelstart.nl/b2b/token`. So are `timeout` and `connect_timeout`, in seconds; they fall back to 30 and 10, also when the value is not a positive number. Without a `client_key` the constructor throws `Snelstart API config is incomplete (token_url, client_key).`
 
 ## From the environment
 
@@ -30,7 +30,7 @@ $relations = $snelstart->getRelaties();
 $snelstart = SnelstartAPI::fromEnv();
 ```
 
-`fromEnv()` reads `SNELSTART_BASE_URL`, `SNELSTART_TOKEN_URL`, `SNELSTART_CLIENT_KEY` and `SNELSTART_SUBSCRIPTION_KEY` with `getenv()`. It does not load a `.env` file; the variables have to be in the real environment.
+`fromEnv()` reads `SNELSTART_BASE_URL`, `SNELSTART_TOKEN_URL`, `SNELSTART_CLIENT_KEY`, `SNELSTART_SUBSCRIPTION_KEY`, `SNELSTART_TIMEOUT` and `SNELSTART_CONNECT_TIMEOUT` with `getenv()`. It does not load a `.env` file; the variables have to be in the real environment.
 
 ## Which one do I use?
 
@@ -41,13 +41,26 @@ $snelstart = SnelstartAPI::fromEnv();
 | Built by | The container, as a singleton | You, with `new` or `fromEnv()` |
 | HTTP | Laravel's HTTP client | cURL |
 | Fake in tests | `Http::fake()` | Not possible; point `base_url` and `token_url` at your own test server |
-| Timeout | 30 seconds, 10 to connect | **None**: a call waits for as long as the server keeps the connection open |
+| Timeout | 30 seconds, 10 to connect, from the config | 30 seconds, 10 to connect, from the array |
+| Access token | In memory and, encrypted, in Laravel's cache | In memory, on the instance |
 | Connection error | `Illuminate\Http\Client\ConnectionException` | `RuntimeException` with `cURL error: ...` |
 | Error body in the message | JSON is decoded and encoded again | The body as it was received |
 
-The methods, the token handling, the messages of the exceptions and the redaction of the keys are the same. Inside Laravel, use the Laravel client: it is the one `snelstart:test` and `EchoService` use, and the only one your tests can fake.
+The methods, the one repeat after a refused token, the messages of the exceptions and the redaction of the keys are the same. Inside Laravel, use the Laravel client: it is the one `snelstart:test` and `EchoService` use, and the only one your tests can fake.
 
-Because the standalone client has no timeout, don't call it from a web request without a limit of your own, such as `set_time_limit()` or the timeout of the queue worker.
+## A call that needs more than 30 seconds
+
+Up to 1.1 the standalone client had no timeout at all. It now gives up after 30 seconds with `cURL error: Operation timed out ...`. For a call that really needs longer, raise it:
+
+```php
+$snelstart = new SnelstartAPI([
+    'client_key' => $clientKey,
+    'subscription_key' => $subscriptionKey,
+    'timeout' => 120,
+]);
+```
+
+Because the token lives on the instance, a script that builds a new client for every call also fetches a new token for every call. Build it once and pass it around.
 
 ## Requirements
 

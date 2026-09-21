@@ -1,7 +1,7 @@
 ---
 title: Troubleshooting
 nav_order: 8
-description: "The messages darvis/snelstart can give, what causes them and what to do: incomplete config, a refused key, 401, 429, timeouts and empty results."
+description: "The messages darvis/snelstart can give, what causes them and what to do: incomplete config, a refused key, 401, 429, timeouts, the token cache and empty results."
 ---
 
 # Troubleshooting
@@ -22,16 +22,18 @@ The token URL answered with a 2xx that is not the expected JSON, for example a l
 
 ## Snelstart API call failed. HTTP status: 401
 
+When the token was one the client already had, it has by now fetched a new token and repeated the call once; this is the answer to the second attempt. So the token is not the problem:
+
 - The subscription key is missing or wrong: without it the package leaves the `Ocp-Apim-Subscription-Key` header out and still makes the call.
-- In a long running process (a queue worker): the token was rejected before the client considered it expired. The client does not fetch a new one on a 401. Call `app()->forgetInstance(\Darvis\Snelstart\Services\SnelstartAPI::class)` and try again, or restart the worker.
+- The client key has no access to what you ask for.
 
 ## Snelstart API call failed. HTTP status: 429
 
 SnelStart refused the call because there were too many. The package does not wait and does not retry. Make the calls from a queued job with a backoff.
 
-## Illuminate\Http\Client\ConnectionException
+## Illuminate\Http\Client\ConnectionException, or cURL error: Operation timed out
 
-SnelStart could not be reached within 30 seconds (10 to connect). This is not a `RuntimeException`; catch it separately. A write that timed out may still have been processed by SnelStart, so check before you send it again.
+SnelStart could not be reached or did not answer within 30 seconds (10 to connect). Raise `SNELSTART_TIMEOUT` or `SNELSTART_CONNECT_TIMEOUT` (the `timeout` and `connect_timeout` keys of the standalone client) for a call that really needs longer. The Laravel client throws the `ConnectionException`, which is not a `RuntimeException`, so catch it separately. The standalone client throws a `RuntimeException` with the cURL message. A write that timed out may still have been processed by SnelStart, so check before you send it again.
 
 ## An empty array comes back
 
@@ -39,9 +41,19 @@ SnelStart could not be reached within 30 seconds (10 to connect). This is not a 
 - The body was not a JSON object or list. The package returns `[]` for that instead of throwing.
 - The administration simply has no such records.
 
-## A call in the standalone client never returns
+## Snelstart token cache is not available, the token is kept in memory only
 
-The standalone client sets no timeout. See [Standalone client](standalone.md).
+A warning in the log, once per process. The cache store could not be used: it is down, `SNELSTART_TOKEN_CACHE_STORE` names a store that is not in `config/cache.php`, or the application has no `APP_KEY` to encrypt the token with. The calls themselves work; every process fetches its own token until the cache is back.
+
+## Every request still fetches a token
+
+- `SNELSTART_TOKEN_CACHE` is `false`.
+- The default cache store is `array` or `null`, which forget everything at the end of the request. Point `SNELSTART_TOKEN_CACHE_STORE` at a store that persists.
+- The token lives sixty seconds or less, so there is nothing to keep.
+
+## After php artisan cache:clear
+
+The token is gone with the rest of the cache. The next call fetches a new one; you don't have to do anything.
 
 ## The config change is ignored
 

@@ -17,17 +17,20 @@
 
 - q: How long is the SnelStart access token kept, and what happens when it expires?
   a: >-
-    The token is kept in memory on the client instance until sixty seconds before `expires_in` runs
-    out (an hour when the response has no `expires_in`); the next call then fetches a new one first. It
-    is not stored in the cache, so every web request fetches its own token, while a queue worker keeps
-    it for as long as the process lives. A 401 on a token that is still kept is not retried; the call
-    throws.
+    Until sixty seconds before `expires_in` runs out (an hour when the response has no `expires_in`);
+    the next call then fetches a new one first. The Laravel client keeps the token in memory and,
+    encrypted with the application key, in Laravel's cache, so a web request does not fetch its own.
+    `SNELSTART_TOKEN_CACHE=false` turns the cache off, `SNELSTART_TOKEN_CACHE_STORE` picks the store,
+    and `php artisan cache:clear` only means the next call fetches a new token. When SnelStart refuses
+    a token the client already had with a 401, the client fetches a new one and repeats the call once.
 
 - q: What does the package do when a SnelStart call fails?
   a: >-
     It throws a `RuntimeException` with the text `Snelstart API call failed. HTTP status: 429.
-    Response: ...`, with the response body behind it. There is no retry, not on 401, 429 or 5xx. In the
-    Laravel client a timeout or a DNS failure surfaces as `Illuminate\Http\Client\ConnectionException`,
+    Response: ...`, with the response body behind it. A 429 or a 5xx is not retried; only a 401 on a token the client
+    already had is repeated once, with a new token. Both clients give up after 30 seconds, 10 to
+    connect (`SNELSTART_TIMEOUT`, `SNELSTART_CONNECT_TIMEOUT`). In the Laravel client a timeout or a
+    DNS failure surfaces as `Illuminate\Http\Client\ConnectionException`,
     which is not a `RuntimeException`. Only `EchoService` never throws; it returns `success` set to
     `false`.
 
@@ -42,14 +45,16 @@
   a: >-
     Yes. `Darvis\Snelstart\Standalone\SnelstartAPI` takes its settings as an array, or from the
     environment with `fromEnv()`, and uses the PHP cURL extension. It has the same methods as the
-    Laravel client. It sets no timeout, so set one around it when you call it from a web request.
+    Laravel client. It keeps the token in memory only and has the same timeouts, 30 seconds and 10 to connect,
+    through the `timeout` and `connect_timeout` keys.
     Composer still installs the `illuminate/*` packages the Laravel client needs.
 
 - q: How do I test code that uses darvis/snelstart without calling SnelStart?
   a: >-
     Fake the HTTP client with `Http::fake()` for `auth.snelstart.nl/*` (return an `access_token`) and
     for `b2bapi.snelstart.nl/*`, set `snelstart.client_key` to any value and add
-    `Http::preventStrayRequests()`. The standalone client uses cURL directly and is not covered by
+    `Http::preventStrayRequests()`. Run the tests on the `array` cache store, or set
+    `SNELSTART_TOKEN_CACHE=false`, so a cached token does not travel from one test to the next. The standalone client uses cURL directly and is not covered by
     `Http::fake()`.
 
 - q: Which Laravel and PHP versions does darvis/snelstart support?

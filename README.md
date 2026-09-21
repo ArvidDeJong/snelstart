@@ -11,7 +11,7 @@ A PHP client for the SnelStart B2B API v2, the API of the Dutch accounting softw
 
 ## Features
 
-- **Authentication handled** - the client key is exchanged for an access token, which is reused until it is about to expire
+- **Authentication handled** - the client key is exchanged for an access token, which is kept encrypted in the cache until it is about to expire, and replaced once when SnelStart refuses it
 - **Relations, articles and sales orders** - and `get()`, `post()`, `put()`, `delete()` and `head()` for every other endpoint
 - **A connection test** - `php artisan snelstart:test`, and an `EchoService` that never throws
 - **A standalone client** - the same methods on cURL, for a project without Laravel
@@ -54,7 +54,7 @@ $relation = $snelstart->createRelatie(['naam' => 'Example B.V.']);
 $snelstart->put('/relaties/'.$relation['id'], $data);   // every other endpoint
 ```
 
-A failed call throws a `RuntimeException` with the HTTP status and the response body; nothing is retried.
+A failed call throws a `RuntimeException` with the HTTP status and the response body. A 429 or a 5xx is not retried, and a request gives up after 30 seconds (`SNELSTART_TIMEOUT`).
 
 Without Laravel:
 
@@ -71,7 +71,7 @@ The full documentation lives on the [documentation site](https://arviddejong.git
 
 - [Installation](https://arviddejong.github.io/snelstart/installation.html): the package, the keys and the config
 - [Quick start](https://arviddejong.github.io/snelstart/quickstart.html): the first calls
-- [How it works](https://arviddejong.github.io/snelstart/concepts.html): authentication, the token lifetime, failures and where the keys go
+- [How it works](https://arviddejong.github.io/snelstart/concepts.html): authentication, the token cache, the retry on a refused token, timeouts and where the keys go
 - [API reference](https://arviddejong.github.io/snelstart/api-reference.html)
 - [Standalone client](https://arviddejong.github.io/snelstart/standalone.html): without Laravel, and how it differs
 - [Testing](https://arviddejong.github.io/snelstart/testing.html): fake SnelStart in your tests

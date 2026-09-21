@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The access token is kept in Laravel's cache**, encrypted with the application key, until sixty
+  seconds before it expires. A web request no longer fetches its own token; it used to make one extra
+  request to SnelStart for every page that called the API. Nothing to do. The cache key holds a hash
+  of the token URL and the client key, so two administrations in one application never share a token,
+  and the client key is not readable in it. A cached value that cannot be decrypted (after a rotated
+  `APP_KEY`) counts as no token, and `php artisan cache:clear` only makes the next call fetch a new
+  one. When the cache store is down or the application has no `APP_KEY`, the client logs one warning
+  and works from memory. New config keys `token_cache.enabled` (`SNELSTART_TOKEN_CACHE`, default
+  `true`) and `token_cache.store` (`SNELSTART_TOKEN_CACHE_STORE`, default the default store). Set
+  `SNELSTART_TOKEN_CACHE=false` to get the behaviour of 1.1.0 back: in memory, on the instance, only.
+- `forgetToken()` on both clients drops the access token on purpose, in memory and in the cache.
+- `timeout` and `connect_timeout` config keys (`SNELSTART_TIMEOUT`, `SNELSTART_CONNECT_TIMEOUT`), in
+  seconds, for the Laravel client, and the same two keys in the config array of the standalone client
+  and in `fromEnv()`. A value that is not a positive number gives the default. A config file you
+  published earlier does not need the new keys; the package file is merged underneath it.
+- `SnelstartConfig::timeout()`, `connectTimeout()`, `tokenCacheEnabled()` and `tokenCacheStore()`.
+
+### Changed
+- **A 401 on a token the client already had is answered with a new token and one repeat of the call**,
+  in both clients. SnelStart can drop a token before it expires; up to 1.1.0 every call in a queue
+  worker then failed until the token ran out or the worker was restarted. A second 401 throws as
+  before, a 401 on a token that was fetched for that same call is not repeated, a 401 of the token
+  endpoint is never repeated, and a 429 or a 5xx is still not retried. If your tests fake a 401 after
+  an earlier successful call, that fake now sees the call twice, with a token request in between.
+- **The standalone client now has a timeout: 30 seconds for a request and 10 to connect**, the same
+  as the Laravel client, for the token request too. It had none, so a call could hang for as long as
+  the server kept the connection open. A call that really needs longer than 30 seconds now fails with
+  `cURL error: Operation timed out ...`; raise it with `'timeout' => 120` in the config array, or
+  `SNELSTART_TIMEOUT=120` for `fromEnv()`.
+- The Laravel client sets its timeouts itself instead of relying on the defaults of Laravel's HTTP
+  client. The numbers are the same, 30 and 10 seconds, so nothing changes until you set
+  `SNELSTART_TIMEOUT` or `SNELSTART_CONNECT_TIMEOUT`.
+- `illuminate/cache`, `illuminate/contracts` and `illuminate/encryption` are now declared
+  dependencies. In a Laravel application they are already there.
+- If your test suite runs on a cache store that persists (file, Redis, database), a token from one
+  test is reused in the next, so the token endpoint fake is called less often. Laravel's default
+  `CACHE_STORE=array` in `phpunit.xml` is not affected; otherwise set `SNELSTART_TOKEN_CACHE=false`
+  there or call `Cache::flush()` before each test.
+
 ## [1.1.0] - 2026-09-21
 
 ### Added

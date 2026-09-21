@@ -36,5 +36,6 @@ credited, unless you prefer not to be.
   returns for a given input is not a vulnerability in this package.
 - Calls that fail or are refused because you make too many of them. The package does not retry and
   does not rate limit; put the calls behind your own authorisation, queue and limits.
-- The standalone client has no timeout, which is documented. A slow server keeps the calling process
-  busy; set your own limit around it.
+- The access token is stored in the cache encrypted with the `APP_KEY` of the application. Whoever
+  has that key and can read the cache store can read the token; protecting both is up to the host
+  application. Set `SNELSTART_TOKEN_CACHE=false` to keep the token in memory only.

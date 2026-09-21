@@ -39,6 +39,22 @@ it('imports the relations', function () {
 - The client throws when it is built without a client key, so set `snelstart.client_key` before you resolve it.
 - The client is a singleton that reads the config once. After changing the config, call `app()->forgetInstance(SnelstartAPI::class)`.
 
+## The cached token
+
+The client keeps its token in the cache. With the `array` store, which Laravel's own `phpunit.xml` sets with `CACHE_STORE=array`, every test starts without a token and nothing changes for you.
+
+When your tests run on a store that persists (file, Redis, database), the token of one test is still there in the next: the token endpoint is not called again, so an `Http::assertSentCount()` is one lower than you expect, and a fake that returns another token is ignored. Pick one:
+
+```xml
+<env name="SNELSTART_TOKEN_CACHE" value="false"/>
+```
+
+```php
+beforeEach(fn () => Cache::flush());
+```
+
+Inside a test, `app(SnelstartAPI::class)->forgetToken()` drops the token, in memory and in the cache.
+
 ## Assert on the request
 
 ```php
@@ -85,6 +101,33 @@ $this->travel(1)->hours();
 $api->getCompanyInfo();
 
 Http::assertSentCount(4);   // two token requests, two API calls
+```
+
+## A refused token
+
+A 401 on a token the client already had gives one new token and one repeat. A fake that always answers 401 therefore sees the call twice when an earlier call in the same test succeeded, and once when it is the first call:
+
+```php
+$accepted = 'first-token';
+$issued = 0;
+
+Http::fake([
+    'auth.snelstart.nl/*' => function () use (&$issued) {
+        return Http::response(['access_token' => ++$issued === 1 ? 'first-token' : 'second-token']);
+    },
+    'b2bapi.snelstart.nl/*' => function ($request) use (&$accepted) {
+        return $request->hasHeader('Authorization', 'Bearer '.$accepted)
+            ? Http::response(['id' => 'r1'])
+            : Http::response([], 401);
+    },
+]);
+
+$api = app(SnelstartAPI::class);
+$api->getCompanyInfo();
+
+$accepted = 'second-token';   // SnelStart dropped the first one
+
+expect($api->getCompanyInfo())->toBe(['id' => 'r1']);
 ```
 
 ## The standalone client
