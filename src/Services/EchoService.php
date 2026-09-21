@@ -2,7 +2,6 @@
 
 namespace Darvis\Snelstart\Services;
 
-use Darvis\Snelstart\Services\SnelstartAPI;
 use Illuminate\Support\Facades\Log;
 
 class EchoService
@@ -15,18 +14,22 @@ class EchoService
     }
 
     /**
-     * GET request to echo/resource endpoint with query parameters
+     * GET request to echo/resource endpoint with query parameters. Never throws: a failure is
+     * logged and returned with success set to false.
+     *
+     * @param  array<string, mixed>  $params
+     * @return array<string, mixed>
      */
     public function getEchoResource(array $params = []): array
     {
         try {
             $startTime = microtime(true);
-            
+
             // Use default parameter if no params are provided
             $queryParams = $params ?: ['param1' => 'sample'];
-            
+
             $response = $this->apiService->get('/echo/resource', $queryParams);
-            
+
             $endTime = microtime(true);
             $responseTime = round(($endTime - $startTime) * 1000, 2);
 
@@ -36,24 +39,27 @@ class EchoService
                 'response_time_ms' => $responseTime,
                 'timestamp' => now()->toISOString(),
                 'query_params' => $queryParams,
-                'response' => $response
+                'response' => $response,
             ];
 
         } catch (\Exception $e) {
-            Log::error('Snelstart Echo Resource GET failed: ' . $e->getMessage());
-            
+            Log::error('Snelstart Echo Resource GET failed: '.$e->getMessage());
+
             return [
                 'success' => false,
                 'message' => 'Echo resource GET failed',
                 'error' => $e->getMessage(),
                 'error_code' => $e->getCode(),
-                'timestamp' => now()->toISOString()
+                'timestamp' => now()->toISOString(),
             ];
         }
     }
 
     /**
-     * HEAD request to echo/resource endpoint
+     * HEAD request to echo/resource endpoint. Never throws.
+     *
+     * @param  array<string, mixed>  $params
+     * @return array<string, mixed>
      */
     public function headEchoResource(array $params = []): array
     {
@@ -73,40 +79,43 @@ class EchoService
                 'response_time_ms' => $responseTime,
                 'timestamp' => now()->toISOString(),
                 'query_params' => $queryParams,
-                'response' => $response
+                'response' => $response,
             ];
 
         } catch (\Exception $e) {
-            Log::error('Snelstart Echo Resource HEAD failed: ' . $e->getMessage());
+            Log::error('Snelstart Echo Resource HEAD failed: '.$e->getMessage());
 
             return [
                 'success' => false,
                 'message' => 'Echo resource HEAD failed',
                 'error' => $e->getMessage(),
                 'error_code' => $e->getCode(),
-                'timestamp' => now()->toISOString()
+                'timestamp' => now()->toISOString(),
             ];
         }
     }
 
     /**
-     * POST request to echo/resource endpoint
+     * POST request to echo/resource endpoint. Never throws.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
      */
     public function postEchoResource(array $data = []): array
     {
         try {
             $startTime = microtime(true);
-            
+
             // Use sample data if no data is provided
             $postData = $data ?: [
                 'vehicleType' => 'train',
                 'maxSpeed' => 125,
                 'avgSpeed' => 90,
-                'speedUnit' => 'mph'
+                'speedUnit' => 'mph',
             ];
-            
+
             $response = $this->apiService->post('/echo/resource', $postData);
-            
+
             $endTime = microtime(true);
             $responseTime = round(($endTime - $startTime) * 1000, 2);
 
@@ -116,18 +125,18 @@ class EchoService
                 'response_time_ms' => $responseTime,
                 'timestamp' => now()->toISOString(),
                 'request_data' => $postData,
-                'response' => $response
+                'response' => $response,
             ];
 
         } catch (\Exception $e) {
-            Log::error('Snelstart Echo Resource POST failed: ' . $e->getMessage());
-            
+            Log::error('Snelstart Echo Resource POST failed: '.$e->getMessage());
+
             return [
                 'success' => false,
                 'message' => 'Echo resource POST failed',
                 'error' => $e->getMessage(),
                 'error_code' => $e->getCode(),
-                'timestamp' => now()->toISOString()
+                'timestamp' => now()->toISOString(),
             ];
         }
     }

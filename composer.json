@@ -1,14 +1,48 @@
 {
     "name": "darvis/snelstart",
-    "description": "Laravel package voor Snelstart boekhoudsoftware integratie",
+    "description": "Laravel client for the SnelStart B2B API v2 (Dutch accounting software): client key authentication, relations, articles, sales orders and a standalone cURL client.",
     "type": "library",
     "license": "MIT",
+    "homepage": "https://arviddejong.github.io/snelstart/",
+    "keywords": [
+        "laravel",
+        "snelstart",
+        "accounting",
+        "bookkeeping",
+        "boekhouden",
+        "b2b-api",
+        "api-client",
+        "invoicing",
+        "laravel-boost"
+    ],
     "authors": [
         {
             "name": "Arvid de Jong",
             "email": "info@arvid.nl"
         }
     ],
+    "support": {
+        "issues": "https://github.com/ArvidDeJong/snelstart/issues",
+        "source": "https://github.com/ArvidDeJong/snelstart",
+        "docs": "https://arviddejong.github.io/snelstart/"
+    },
+    "require": {
+        "php": "^8.2",
+        "illuminate/console": "^11.0|^12.0|^13.0",
+        "illuminate/http": "^11.0|^12.0|^13.0",
+        "illuminate/support": "^11.0|^12.0|^13.0",
+        "nesbot/carbon": "^2.72|^3.0"
+    },
+    "require-dev": {
+        "larastan/larastan": "^3.0",
+        "laravel/pint": "^1.0",
+        "orchestra/testbench": "^9.0|^10.0|^11.0",
+        "pestphp/pest": "^3.0|^4.0",
+        "pestphp/pest-plugin-laravel": "^3.0|^4.0"
+    },
+    "suggest": {
+        "ext-curl": "Required by Darvis\\Snelstart\\Standalone\\SnelstartAPI, the client for projects without Laravel."
+    },
     "autoload": {
         "psr-4": {
             "Darvis\\Snelstart\\": "src/"
@@ -17,6 +51,18 @@
     "autoload-dev": {
         "psr-4": {
             "Darvis\\Snelstart\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "pest tests",
+        "lint": "pint --test",
+        "format": "pint",
+        "analyse": "phpstan analyse --memory-limit=1G"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
         }
     },
     "extra": {

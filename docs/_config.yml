@@ -1,0 +1,49 @@
+title: SnelStart for Laravel
+description: "darvis/snelstart is a PHP client for the SnelStart B2B API v2, the API of the Dutch accounting software SnelStart. It handles the client key authentication and ships a Laravel client and a standalone cURL client."
+url: https://arviddejong.github.io
+baseurl: /snelstart
+
+remote_theme: just-the-docs/just-the-docs@v0.12.0
+plugins:
+  - jekyll-remote-theme
+  - jekyll-relative-links
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+# Facts about the package, used by the structured data and llms.txt.
+package:
+  name: darvis/snelstart
+  repository: https://github.com/ArvidDeJong/snelstart
+  packagist: https://packagist.org/packages/darvis/snelstart
+  license_url: https://github.com/ArvidDeJong/snelstart/blob/main/LICENSE
+  requires: "PHP 8.2+, Laravel 11, 12 or 13, a SnelStart client key and a B2B API subscription key"
+  platforms: [Laravel, PHP]
+  keywords: [laravel, snelstart, snelstart api, b2b api, accounting, bookkeeping, boekhouden, relaties, verkooporders, api client]
+
+# Developer credit in the footer and the structured data.
+developer:
+  company: ARVID.NL
+  url: https://arvid.nl
+
+color_scheme: light
+search_enabled: true
+heading_anchors: true
+
+aux_links:
+  GitHub: https://github.com/ArvidDeJong/snelstart
+  Packagist: https://packagist.org/packages/darvis/snelstart
+aux_links_new_tab: true
+
+gh_edit_link: true
+gh_edit_link_text: Edit this page on GitHub
+gh_edit_repository: https://github.com/ArvidDeJong/snelstart
+gh_edit_branch: main
+gh_edit_source: docs
+gh_edit_view_mode: tree
+
+# Social preview image for every page (Open Graph and Twitter card, through jekyll-seo-tag).
+defaults:
+  - scope:
+      path: ""
+    values:
+      image: /assets/images/social-preview.png

@@ -1,0 +1,58 @@
+# Questions as people ask them to an assistant. Short, factual answers.
+# Rendered on faq.md, in the FAQPage structured data and in llms.txt.
+- q: How do I connect a Laravel application to the SnelStart API?
+  a: >-
+    Install `darvis/snelstart`, set `SNELSTART_CLIENT_KEY` and `SNELSTART_SUBSCRIPTION_KEY` in `.env`
+    and resolve `Darvis\Snelstart\Services\SnelstartAPI` from the container. `getCompanyInfo()`,
+    `getRelaties()`, `getArtikelen()`, `createRelatie()` and `createVerkooporder()` are ready to use,
+    and `get()`, `post()`, `put()`, `delete()` and `head()` reach every other endpoint of the B2B API v2.
+    Run `php artisan snelstart:test` to check the keys.
+
+- q: How does darvis/snelstart authenticate with SnelStart?
+  a: >-
+    It posts `grant_type=clientkey` and your client key as a form to the token endpoint
+    (`https://auth.snelstart.nl/b2b/token`) and receives an access token. Every API call then carries
+    that token in the `Authorization` header and the subscription key in the
+    `Ocp-Apim-Subscription-Key` header. Neither key is ever part of a URL.
+
+- q: How long is the SnelStart access token kept, and what happens when it expires?
+  a: >-
+    The token is kept in memory on the client instance until sixty seconds before `expires_in` runs
+    out (an hour when the response has no `expires_in`); the next call then fetches a new one first. It
+    is not stored in the cache, so every web request fetches its own token, while a queue worker keeps
+    it for as long as the process lives. A 401 on a token that is still kept is not retried; the call
+    throws.
+
+- q: What does the package do when a SnelStart call fails?
+  a: >-
+    It throws a `RuntimeException` with the text `Snelstart API call failed. HTTP status: 429.
+    Response: ...`, with the response body behind it. There is no retry, not on 401, 429 or 5xx. In the
+    Laravel client a timeout or a DNS failure surfaces as `Illuminate\Http\Client\ConnectionException`,
+    which is not a `RuntimeException`. Only `EchoService` never throws; it returns `success` set to
+    `false`.
+
+- q: Can my SnelStart keys end up in a log file?
+  a: >-
+    The client key goes in the body of the token request and the subscription key and the token go in
+    headers, so they are not in a URL that an HTTP exception quotes. The response body of a failed call
+    is part of the exception message, and the package replaces the client key, the subscription key and
+    the access token in it with `[redacted]` before it throws, logs or prints it.
+
+- q: Can I use darvis/snelstart without Laravel?
+  a: >-
+    Yes. `Darvis\Snelstart\Standalone\SnelstartAPI` takes its settings as an array, or from the
+    environment with `fromEnv()`, and uses the PHP cURL extension. It has the same methods as the
+    Laravel client. It sets no timeout, so set one around it when you call it from a web request.
+    Composer still installs the `illuminate/*` packages the Laravel client needs.
+
+- q: How do I test code that uses darvis/snelstart without calling SnelStart?
+  a: >-
+    Fake the HTTP client with `Http::fake()` for `auth.snelstart.nl/*` (return an `access_token`) and
+    for `b2bapi.snelstart.nl/*`, set `snelstart.client_key` to any value and add
+    `Http::preventStrayRequests()`. The standalone client uses cURL directly and is not covered by
+    `Http::fake()`.
+
+- q: Which Laravel and PHP versions does darvis/snelstart support?
+  a: >-
+    PHP 8.2 and higher with Laravel 11, 12 or 13. The test suite runs on every combination, on the
+    lowest and the latest dependencies.

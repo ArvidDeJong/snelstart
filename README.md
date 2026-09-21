@@ -1,6 +1,29 @@
-# Snelstart PHP Package
+# SnelStart for Laravel
 
-A standalone PHP package for integration with the **SnelStart B2B-Api v2**. Works seamlessly with Laravel but can also be used in any PHP project without dependencies.
+[![Latest version](https://img.shields.io/packagist/v/darvis/snelstart.svg)](https://packagist.org/packages/darvis/snelstart)
+[![Tests](https://github.com/ArvidDeJong/snelstart/actions/workflows/tests.yml/badge.svg)](https://github.com/ArvidDeJong/snelstart/actions/workflows/tests.yml)
+[![PHP version](https://img.shields.io/packagist/dependency-v/darvis/snelstart/php.svg)](https://packagist.org/packages/darvis/snelstart)
+[![License](https://img.shields.io/packagist/l/darvis/snelstart.svg)](LICENSE)
+
+A PHP client for the SnelStart B2B API v2, the API of the Dutch accounting software SnelStart. For Laravel, and for plain PHP.
+
+![SnelStart for Laravel](docs/assets/images/social-preview.png)
+
+## Features
+
+- **Authentication handled** - the client key is exchanged for an access token, which is reused until it is about to expire
+- **Relations, articles and sales orders** - and `get()`, `post()`, `put()`, `delete()` and `head()` for every other endpoint
+- **A connection test** - `php artisan snelstart:test`, and an `EchoService` that never throws
+- **A standalone client** - the same methods on cURL, for a project without Laravel
+- **Safe with your keys** - never in a URL, and removed from error messages before they are thrown, logged or printed
+- **Laravel Boost** - guideline and skill included, so an AI assistant in your app knows the API
+
+## Requirements
+
+- PHP 8.2+
+- Laravel 11, 12 or 13
+- A SnelStart client key and a subscription key of the B2B API
+- The cURL extension, only for the standalone client
 
 ## Installation
 
@@ -8,155 +31,72 @@ A standalone PHP package for integration with the **SnelStart B2B-Api v2**. Work
 composer require darvis/snelstart
 ```
 
-The ServiceProvider is automatically registered via Laravel's package auto-discovery.
-
-### Publish Configuration
-
-```bash
-php artisan vendor:publish --tag=snelstart-config
-```
-
-## Configuration
-
-Add the following variables to your `.env` file:
-
 ```env
-SNELSTART_BASE_URL=https://b2bapi.snelstart.nl/v2
-SNELSTART_TOKEN_URL=https://auth.snelstart.nl/b2b/token
-SNELSTART_CLIENT_KEY=your-custom-clientkey
+SNELSTART_CLIENT_KEY=your-client-key
 SNELSTART_SUBSCRIPTION_KEY=your-subscription-key
 ```
-
-| Variable | Description |
-|----------|-------------|
-| `SNELSTART_BASE_URL` | Base URL of the Snelstart v2 API |
-| `SNELSTART_TOKEN_URL` | Token endpoint for authentication |
-| `SNELSTART_CLIENT_KEY` | Custom clientkey from SnelStart Web |
-| `SNELSTART_SUBSCRIPTION_KEY` | Subscription key from the B2B portal |
-
-## Usage
-
-### Via Dependency Injection
-
-```php
-use Darvis\Snelstart\Services\SnelstartAPI;
-
-class MyController extends Controller
-{
-    public function index(SnelstartAPI $snelstart)
-    {
-        $relations = $snelstart->getRelaties();
-        $articles = $snelstart->getArtikelen();
-        
-        return view('overview', compact('relations', 'articles'));
-    }
-}
-```
-
-### Via the Container
-
-```php
-$snelstart = app(Darvis\Snelstart\Services\SnelstartAPI::class);
-$companyInfo = $snelstart->getCompanyInfo();
-```
-
-### Available Methods
-
-**Company Info**
-```php
-$snelstart->getCompanyInfo();
-```
-
-**Relations**
-```php
-$snelstart->getRelaties();
-$snelstart->createRelatie(['naam' => 'Company B.V.', ...]);
-```
-
-**Articles**
-```php
-$snelstart->getArtikelen();
-```
-
-**Sales Orders**
-```php
-$snelstart->createVerkooporder([...]);
-```
-
-**Generic HTTP Methods**
-```php
-$snelstart->get('/endpoint', ['query' => 'params']);
-$snelstart->post('/endpoint', ['data' => 'here']);
-$snelstart->put('/endpoint', ['data' => 'here']);
-$snelstart->delete('/endpoint');
-```
-
-### EchoService (for testing)
-
-The EchoService can be used to test the API connection:
-
-```php
-use Darvis\Snelstart\Services\EchoService;
-
-$echo = app(EchoService::class);
-
-// GET test
-$result = $echo->getEchoResource(['param1' => 'test']);
-
-// POST test
-$result = $echo->postEchoResource(['key' => 'value']);
-```
-
-## Artisan Commands
-
-Test the connection with the Snelstart API:
 
 ```bash
 php artisan snelstart:test
 ```
 
-## Standalone Usage (without Laravel)
+## Quick start
 
-This package can also be used without Laravel in any PHP project.
+```php
+use Darvis\Snelstart\Services\SnelstartAPI;
 
-### Via Configuration Array
+$snelstart = app(SnelstartAPI::class);
+
+$company = $snelstart->getCompanyInfo();
+$relations = $snelstart->getRelaties(['$top' => 50]);
+$relation = $snelstart->createRelatie(['naam' => 'Example B.V.']);
+
+$snelstart->put('/relaties/'.$relation['id'], $data);   // every other endpoint
+```
+
+A failed call throws a `RuntimeException` with the HTTP status and the response body; nothing is retried.
+
+Without Laravel:
 
 ```php
 use Darvis\Snelstart\Standalone\SnelstartAPI;
 
-$snelstart = new SnelstartAPI([
-    'base_url' => 'https://b2bapi.snelstart.nl/v2',
-    'token_url' => 'https://auth.snelstart.nl/b2b/token',
-    'client_key' => 'your-custom-clientkey',
-    'subscription_key' => 'your-subscription-key',
-]);
-
-$companyInfo = $snelstart->getCompanyInfo();
-$relations = $snelstart->getRelaties();
+$snelstart = new SnelstartAPI(['client_key' => $clientKey, 'subscription_key' => $subscriptionKey]);
+// or: SnelstartAPI::fromEnv();
 ```
 
-### Via Environment Variables
+## Documentation
 
-```php
-use Darvis\Snelstart\Standalone\SnelstartAPI;
+The full documentation lives on the [documentation site](https://arviddejong.github.io/snelstart/):
 
-// Reads from SNELSTART_BASE_URL, SNELSTART_TOKEN_URL, 
-// SNELSTART_CLIENT_KEY, SNELSTART_SUBSCRIPTION_KEY
-$snelstart = SnelstartAPI::fromEnv();
+- [Installation](https://arviddejong.github.io/snelstart/installation.html): the package, the keys and the config
+- [Quick start](https://arviddejong.github.io/snelstart/quickstart.html): the first calls
+- [How it works](https://arviddejong.github.io/snelstart/concepts.html): authentication, the token lifetime, failures and where the keys go
+- [API reference](https://arviddejong.github.io/snelstart/api-reference.html)
+- [Standalone client](https://arviddejong.github.io/snelstart/standalone.html): without Laravel, and how it differs
+- [Testing](https://arviddejong.github.io/snelstart/testing.html): fake SnelStart in your tests
+- [Troubleshooting](https://arviddejong.github.io/snelstart/troubleshooting.html)
 
-$companyInfo = $snelstart->getCompanyInfo();
+## Testing
+
+```bash
+composer test      # Pest
+composer lint      # Pint, check only; composer format fixes
+composer analyse   # Larastan
 ```
 
-### Requirements for Standalone
+## Changelog
 
-- PHP 8.2+
-- cURL extension enabled
+See [CHANGELOG](CHANGELOG.md).
 
-## Author
+## Contributing
 
-**Arvid de Jong**  
-info@arvid.nl
+See [CONTRIBUTING](CONTRIBUTING.md).
+
+## Security
+
+Please report a vulnerability privately, as described in [SECURITY](SECURITY.md), not in the issue tracker.
 
 ## License
 
-MIT License
+The MIT License (MIT). See [LICENSE](LICENSE).

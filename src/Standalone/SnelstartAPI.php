@@ -7,8 +7,9 @@ namespace Darvis\Snelstart\Standalone;
 use DateTime;
 
 /**
- * Standalone Snelstart API client without Laravel dependencies.
- * Uses native PHP cURL for HTTP requests.
+ * Standalone Snelstart API client for projects without Laravel. It takes its settings as an array
+ * (or from the environment) and uses native PHP cURL for HTTP requests, so Http::fake() does not
+ * see it. Inside a Laravel application use Darvis\Snelstart\Services\SnelstartAPI instead.
  */
 class SnelstartAPI
 {
@@ -24,6 +25,9 @@ class SnelstartAPI
 
     protected ?DateTime $tokenExpiresAt = null;
 
+    /**
+     * @param  array<string, mixed>  $config  base_url, token_url, client_key and subscription_key
+     */
     public function __construct(array $config)
     {
         $this->baseUrl = rtrim($config['base_url'] ?? 'https://b2bapi.snelstart.nl/v2', '/');
@@ -56,26 +60,55 @@ class SnelstartAPI
      | -----------------------------------------------------------------
      */
 
+    /**
+     * GET /companyInfo: the administration the keys belong to.
+     *
+     * @return array<mixed>
+     */
     public function getCompanyInfo(): array
     {
         return $this->get('/companyInfo');
     }
 
+    /**
+     * GET /relaties: the relations (customers and suppliers).
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<mixed>
+     */
     public function getRelaties(array $query = []): array
     {
         return $this->get('/relaties', $query);
     }
 
+    /**
+     * POST /relaties: create a relation.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<mixed>
+     */
     public function createRelatie(array $data): array
     {
         return $this->post('/relaties', $data);
     }
 
+    /**
+     * GET /artikelen: the articles.
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<mixed>
+     */
     public function getArtikelen(array $query = []): array
     {
         return $this->get('/artikelen', $query);
     }
 
+    /**
+     * POST /verkooporders: create a sales order.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<mixed>
+     */
     public function createVerkooporder(array $data): array
     {
         return $this->post('/verkooporders', $data);
@@ -86,26 +119,56 @@ class SnelstartAPI
      | -----------------------------------------------------------------
      */
 
+    /**
+     * GET any endpoint below the base URL.
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<mixed>
+     */
     public function get(string $uri, array $query = []): array
     {
         return $this->request('GET', $uri, ['query' => $query]);
     }
 
+    /**
+     * POST to any endpoint below the base URL. An empty array sends no body.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<mixed>
+     */
     public function post(string $uri, array $data = []): array
     {
         return $this->request('POST', $uri, ['json' => $data]);
     }
 
+    /**
+     * PUT to any endpoint below the base URL. An empty array sends no body.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<mixed>
+     */
     public function put(string $uri, array $data = []): array
     {
         return $this->request('PUT', $uri, ['json' => $data]);
     }
 
+    /**
+     * DELETE any endpoint below the base URL.
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<mixed>
+     */
     public function delete(string $uri, array $query = []): array
     {
         return $this->request('DELETE', $uri, ['query' => $query]);
     }
 
+    /**
+     * HEAD any endpoint below the base URL. The result is always an empty array.
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<mixed>
+     */
     public function head(string $uri, array $query = []): array
     {
         return $this->request('HEAD', $uri, ['query' => $query]);
@@ -113,25 +176,31 @@ class SnelstartAPI
 
     /**
      * Central request method: automatically adds Bearer token + subscription key.
+     *
+     * @param  non-empty-string  $method
+     * @param  array<string, mixed>  $options  'query' and 'json'
+     * @return array<mixed>
+     *
+     * @throws \RuntimeException when the API answers with a 4xx or 5xx status
      */
     protected function request(string $method, string $uri, array $options = []): array
     {
         $token = $this->getAccessToken();
-        $url = $this->baseUrl . '/' . ltrim($uri, '/');
+        $url = $this->baseUrl.'/'.ltrim($uri, '/');
 
         // Add query parameters to URL
-        if (!empty($options['query'])) {
-            $url .= '?' . http_build_query($options['query']);
+        if (! empty($options['query'])) {
+            $url .= '?'.http_build_query($options['query']);
         }
 
         $headers = [
-            'Authorization: Bearer ' . $token,
+            'Authorization: Bearer '.$token,
             'Accept: application/json',
             'Content-Type: application/json',
         ];
 
-        if (!empty($this->subscriptionKey)) {
-            $headers[] = 'Ocp-Apim-Subscription-Key: ' . $this->subscriptionKey;
+        if (! empty($this->subscriptionKey)) {
+            $headers[] = 'Ocp-Apim-Subscription-Key: '.$this->subscriptionKey;
         }
 
         $ch = curl_init();
@@ -140,28 +209,37 @@ class SnelstartAPI
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
 
-        if (in_array($method, ['POST', 'PUT']) && !empty($options['json'])) {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($options['json']));
+        if ($method === 'HEAD') {
+            // A HEAD response announces a Content-Length but has no body. Without this cURL waits
+            // for that body until the server closes the connection, and then reports an error.
+            curl_setopt($ch, CURLOPT_NOBODY, true);
+        }
+
+        if (in_array($method, ['POST', 'PUT']) && ! empty($options['json'])) {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, (string) json_encode($options['json']));
         }
 
         $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
         curl_close($ch);
 
         if ($error) {
-            throw new \RuntimeException('cURL error: ' . $error);
+            throw new \RuntimeException('cURL error: '.$error);
         }
+
+        $response = is_string($response) ? $response : '';
 
         if ($httpCode >= 400) {
             $this->handleError($httpCode, $response);
         }
 
-        if (empty($response)) {
+        if ($response === '') {
             return [];
         }
 
         $decoded = json_decode($response, true);
+
         return is_array($decoded) ? $decoded : [];
     }
 
@@ -175,13 +253,17 @@ class SnelstartAPI
         if (
             $this->accessToken !== null &&
             $this->tokenExpiresAt !== null &&
-            $this->tokenExpiresAt > new DateTime()
+            $this->tokenExpiresAt > new DateTime
         ) {
             return $this->accessToken;
         }
 
         // SnelStart-specific authentication flow:
         // grant_type=clientkey & clientkey=<custom-key>
+        if ($this->tokenUrl === '') {
+            throw new \RuntimeException('Snelstart API config is incomplete (token_url, client_key).');
+        }
+
         $payload = http_build_query([
             'grant_type' => 'clientkey',
             'clientkey' => $this->clientKey,
@@ -203,25 +285,27 @@ class SnelstartAPI
         curl_close($ch);
 
         if ($error) {
-            throw new \RuntimeException('Failed to retrieve access_token: cURL error: ' . $error);
+            throw new \RuntimeException('Failed to retrieve access_token: cURL error: '.$error);
         }
 
+        $response = is_string($response) ? $response : '';
+
         if ($httpCode >= 400) {
-            throw new \RuntimeException(
-                'Failed to retrieve access_token from Snelstart. HTTP status: ' . $httpCode . '. Response: ' . $response
-            );
+            throw new \RuntimeException($this->redactSecrets(
+                'Failed to retrieve access_token from Snelstart. HTTP status: '.$httpCode.'. Response: '.$response
+            ));
         }
 
         $data = json_decode($response, true);
 
-        if (!isset($data['access_token'])) {
+        if (! isset($data['access_token'])) {
             throw new \RuntimeException('Snelstart token response does not contain access_token.');
         }
 
         $this->accessToken = (string) $data['access_token'];
 
         $expiresIn = isset($data['expires_in']) ? (int) $data['expires_in'] : 3600;
-        $this->tokenExpiresAt = (new DateTime())->modify('+' . ($expiresIn - 60) . ' seconds');
+        $this->tokenExpiresAt = (new DateTime)->modify('+'.($expiresIn - 60).' seconds');
 
         return $this->accessToken;
     }
@@ -233,12 +317,35 @@ class SnelstartAPI
 
     protected function handleError(int $httpCode, string $response): void
     {
-        $message = 'Snelstart API call failed. HTTP status: ' . $httpCode . '.';
+        $message = 'Snelstart API call failed. HTTP status: '.$httpCode.'.';
 
-        if (!empty($response)) {
-            $message .= ' Response: ' . $response;
+        if (! empty($response)) {
+            $message .= ' Response: '.$response;
         }
 
-        throw new \RuntimeException($message);
+        throw new \RuntimeException($this->redactSecrets($message));
+    }
+
+    /**
+     * Replace the client key, the subscription key and the access token in a message. An error
+     * response can echo what was sent, and the message ends up in logs and on screens.
+     */
+    protected function redactSecrets(string $message): string
+    {
+        $search = [];
+
+        foreach ([$this->clientKey, $this->subscriptionKey, $this->accessToken] as $secret) {
+            if (! is_string($secret) || $secret === '') {
+                continue;
+            }
+
+            // As it is, as it looks inside a JSON string, and as it looks in a form body or a URL.
+            $search[] = $secret;
+            $search[] = trim((string) json_encode($secret), '"');
+            $search[] = urlencode($secret);
+            $search[] = rawurlencode($secret);
+        }
+
+        return str_replace(array_unique($search), '[redacted]', $message);
     }
 }
