@@ -321,3 +321,151 @@ describe('secrets', function () {
         }
     });
 });
+
+/**
+ * A client that already holds a token, as a long running process does.
+ */
+function standaloneClientHolding(string $heldToken, string $base): SnelstartAPI
+{
+    return new class(['base_url' => standaloneUrl($base), 'token_url' => standaloneUrl('/token/ok'), 'client_key' => STANDALONE_CLIENT_KEY], $heldToken) extends SnelstartAPI
+    {
+        /** @param  array<string, mixed>  $config */
+        public function __construct(array $config, string $heldToken)
+        {
+            parent::__construct($config);
+
+            $this->accessToken = $heldToken;
+            $this->tokenExpiresAt = new DateTime('+1 hour');
+        }
+    };
+}
+
+describe('a refused token', function () {
+    it('fetches a new token and repeats the call once when a held token is refused', function () {
+        $client = standaloneClientHolding('revoked-token', '/only/'.STANDALONE_ACCESS_TOKEN.'/v2');
+
+        expect($client->createRelatie(['naam' => 'Example B.V.']))->toBe(['id' => 'abc']);
+
+        $requests = standaloneRequests();
+
+        expect(array_column($requests, 'target'))->toBe([
+            '/only/'.STANDALONE_ACCESS_TOKEN.'/v2/relaties',
+            '/token/ok',
+            '/only/'.STANDALONE_ACCESS_TOKEN.'/v2/relaties',
+        ])
+            ->and($requests[0]['headers']['authorization'])->toBe('Bearer revoked-token')
+            ->and($requests[2]['headers']['authorization'])->toBe('Bearer '.STANDALONE_ACCESS_TOKEN)
+            ->and($requests[2]['method'])->toBe('POST')
+            ->and($requests[2]['body'])->toBe('{"naam":"Example B.V."}');
+    });
+
+    it('reports a second 401 as before, and tries only once', function () {
+        $client = standaloneClientHolding('revoked-token', '/status/401');
+
+        expect(fn () => $client->getCompanyInfo())->toThrow(
+            RuntimeException::class,
+            'Snelstart API call failed. HTTP status: 401. Response: {"message":"Something went wrong"}',
+        );
+
+        expect(array_column(standaloneRequests(), 'target'))->toBe(['/status/401/companyInfo', '/token/ok', '/status/401/companyInfo']);
+    });
+
+    it('does not repeat a call that was refused with a token it fetched a moment ago', function () {
+        expect(fn () => standaloneClient(base: '/status/401')->getCompanyInfo())->toThrow(RuntimeException::class, 'HTTP status: 401');
+
+        expect(array_column(standaloneRequests(), 'target'))->toBe(['/token/ok', '/status/401/companyInfo']);
+    });
+
+    it('does not retry a 403, 429 or 5xx on a held token', function (int $status) {
+        $client = standaloneClientHolding('held-token', '/status/'.$status);
+
+        expect(fn () => $client->getCompanyInfo())->toThrow(RuntimeException::class, 'HTTP status: '.$status);
+
+        expect(standaloneRequests())->toHaveCount(1);
+    })->with([403, 429, 500, 503]);
+
+    it('forgets the token with forgetToken()', function () {
+        $client = standaloneClient();
+        $client->getCompanyInfo();
+        $client->forgetToken();
+        $client->getCompanyInfo();
+
+        expect(array_column(standaloneRequests(), 'target'))->toBe(['/token/ok', '/v2/companyInfo', '/token/ok', '/v2/companyInfo']);
+    });
+});
+
+describe('timeouts', function () {
+    it('defaults to thirty seconds, and ten to connect, like the Laravel client', function (array $config) {
+        $client = new class(['client_key' => 'key'] + $config) extends SnelstartAPI
+        {
+            /** @return array<int, float> */
+            public function timeouts(): array
+            {
+                return [$this->timeout, $this->connectTimeout];
+            }
+        };
+
+        expect($client->timeouts())->toBe([30.0, 10.0]);
+    })->with([
+        'nothing' => [[]],
+        'zero' => [['timeout' => 0, 'connect_timeout' => 0]],
+        'negative' => [['timeout' => -1, 'connect_timeout' => '-3']],
+        'not a number' => [['timeout' => 'abc', 'connect_timeout' => true]],
+        'null' => [['timeout' => null, 'connect_timeout' => null]],
+    ]);
+
+    it('still gets a normal response with a short timeout', function () {
+        $client = new SnelstartAPI([
+            'base_url' => standaloneUrl('/v2'),
+            'token_url' => standaloneUrl('/token/ok'),
+            'client_key' => STANDALONE_CLIENT_KEY,
+            'timeout' => 1,
+            'connect_timeout' => 1,
+        ]);
+
+        expect($client->getCompanyInfo())->toBe(['id' => 'abc']);
+    });
+
+    it('gives up on an API call that takes longer than the timeout', function () {
+        $client = new SnelstartAPI([
+            'base_url' => standaloneUrl('/slow/1300/v2'),
+            'token_url' => standaloneUrl('/token/ok'),
+            'client_key' => STANDALONE_CLIENT_KEY,
+            'timeout' => 1,
+        ]);
+
+        $start = microtime(true);
+
+        expect(fn () => $client->getCompanyInfo())->toThrow(RuntimeException::class, 'cURL error: Operation timed out');
+        expect(microtime(true) - $start)->toBeLessThan(1.5);
+    });
+
+    it('gives up on a token request that takes longer than the timeout', function () {
+        $client = new SnelstartAPI([
+            'token_url' => standaloneUrl('/token/slow-600'),
+            'client_key' => STANDALONE_CLIENT_KEY,
+            'timeout' => '0.3',
+        ]);
+
+        $start = microtime(true);
+
+        expect(fn () => $client->getCompanyInfo())->toThrow(RuntimeException::class, 'Failed to retrieve access_token: cURL error: ');
+        expect(microtime(true) - $start)->toBeLessThan(0.55);
+    });
+
+    it('reads both timeouts from the environment in fromEnv()', function () {
+        putenv('SNELSTART_CLIENT_KEY=key');
+        putenv('SNELSTART_TIMEOUT=7');
+        putenv('SNELSTART_CONNECT_TIMEOUT=1.5');
+
+        try {
+            $timeouts = (fn () => [$this->timeout, $this->connectTimeout])->call(SnelstartAPI::fromEnv());
+        } finally {
+            putenv('SNELSTART_CLIENT_KEY');
+            putenv('SNELSTART_TIMEOUT');
+            putenv('SNELSTART_CONNECT_TIMEOUT');
+        }
+
+        expect($timeouts)->toBe([7.0, 1.5]);
+    });
+});

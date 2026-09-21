@@ -34,6 +34,19 @@ abstract class TestCase extends Orchestra
         // The package defaults have no keys, and without a client key the client cannot be built.
         $app['config']->set('snelstart.client_key', self::CLIENT_KEY);
         $app['config']->set('snelstart.subscription_key', self::SUBSCRIPTION_KEY);
+
+        // The token cache encrypts with the application key and uses the default cache store.
+        $app['config']->set('app.key', 'base64:'.base64_encode(str_repeat('a', 32)));
+        $app['config']->set('cache.default', 'array');
+    }
+
+    /**
+     * The key the client stores its token under. Pinned here on purpose: a change of format makes
+     * every host app fetch a new token once, which is harmless, but must not happen by accident.
+     */
+    public static function tokenCacheKey(string $clientKey = self::CLIENT_KEY, string $tokenUrl = 'https://auth.snelstart.nl/b2b/token'): string
+    {
+        return 'snelstart.token.'.hash('sha256', $tokenUrl.'|'.$clientKey);
     }
 
     /**
