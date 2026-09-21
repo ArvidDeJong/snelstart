@@ -58,10 +58,10 @@ try {
 ### Read a list
 
 ```php
-$relations = app(SnelstartAPI::class)->getRelaties(['$top' => 50, '$skip' => 100]);
+$relations = app(SnelstartAPI::class)->getRelaties($query);
 ```
 
-The query array is passed on as it is. The package does not page for you: one call is one request.
+`$query` is an array that becomes the query string as it is; which parameters an endpoint accepts is in the SnelStart API documentation, the package does not know them. The package does not page for you: one call is one request.
 
 ### Write from a job
 
@@ -70,7 +70,8 @@ public function handle(SnelstartAPI $snelstart): void
 {
     $order = $snelstart->createVerkooporder($this->payload);
 
-    $this->order->update(['snelstart_id' => $order['id'] ?? null]);
+    // $order is the decoded response of SnelStart, unchanged. Store what you need from it.
+    $this->order->update(['snelstart_response' => $order]);
 }
 ```
 

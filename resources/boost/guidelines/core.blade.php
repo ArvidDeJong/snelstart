@@ -46,7 +46,8 @@ public function handle(SnelstartAPI $snelstart): void
         return;
     }
 
-    $this->customer->update(['snelstart_id' => $relation['id'] ?? null]);
+    // $relation is the decoded response of SnelStart, unchanged. Store what you need from it.
+    $this->customer->update(['snelstart_response' => $relation]);
 }
 </code-snippet>
 @endverbatim

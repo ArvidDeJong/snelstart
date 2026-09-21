@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Documentation only; nothing in the package changes.
+- The quick start injected the client into a controller method and caught the exception inside that
+  method. The client throws `Snelstart API config is incomplete (token_url, client_key).` while it is
+  being built, so with injection that happens before the method runs and the `catch` never sees it.
+  The example now resolves the client inside the `try`, as `snelstart:test` does.
+- Examples used the query parameters `$top` and `$skip` and read `$relation['id']` and `$order['id']`
+  from a response, in the docs, the README and the Laravel Boost files. The package knows neither:
+  it passes your query array on as it is and returns the response of SnelStart unchanged. The
+  examples no longer suggest otherwise; the SnelStart API documentation is where those names live.
+- The troubleshooting page gave causes the package cannot know (a key cut off while copying, a login
+  page behind the token URL, a client key without access) and the "How it works" page said that a
+  repeated `POST` after a 401 can never create something twice. Those are statements about SnelStart,
+  not about this package, and are replaced by what the package does.
+- The failure example on the testing page used `SnelstartException` without importing it, so it did
+  not run as written. The page now has one complete test file, with imports, for the controller of
+  the quick start.
+- The token cache warning is logged once per client instance, not "once per process", and also when
+  only the lock fails (for example a `database` cache store without a `cache_locks` table).
+- The installation page says where the two keys are found in the words of the package's own config
+  file, marked as a note of the package author; SnelStart issues them and documents how.
+
+### Added
+- "Check that it works" on the installation page, with the literal output of
+  `php artisan snelstart:test` for success and for each usual failure.
+- "What it does not do" on the home page: no models, no synchronisation, no webhooks, no validation
+  or mapping of fields, no paging, no retry for a 429 or a 5xx, no facade.
+- The troubleshooting page is organised as message, cause, fix, and gained entries for a cached
+  config, `There are no commands defined in the "snelstart" namespace.`, other 4xx and 5xx statuses
+  and a config file published with an older version.
+- A `## Laravel Boost` section in the README, and a docs guard test for the description length, the
+  number of FAQ questions, the links between pages and the messages the pages quote from `src/`.
+
 ## [1.3.0] - 2026-09-21
 
 ### Added

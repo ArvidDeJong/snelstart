@@ -1,68 +1,102 @@
 ---
-title: Installation
+title: "Installation"
 nav_order: 2
-description: "Install darvis/snelstart, set the client key and the subscription key, publish the config file and check the connection."
+description: "Install darvis/snelstart in Laravel: the package, the client key and the subscription key in .env, the optional config file, and how to check that it works."
 ---
 
 # Installation
 
-## The package
+## Requirements
+
+- PHP 8.2+
+- Laravel 11, 12 or 13
+- A SnelStart client key and a subscription key for the B2B API
+- An `APP_KEY` and a cache store that persists, if you want the access token to be cached (a new Laravel application has both)
+
+## 1. Install the package
 
 ```bash
 composer require darvis/snelstart
 ```
 
-Laravel discovers the service provider by itself.
+Laravel registers the service provider by itself (package discovery). There is nothing to add to `bootstrap/providers.php`, and the package has no migrations.
 
-## The keys
+## 2. Get the two keys
 
-You need two keys:
+The package needs two values, and SnelStart issues both:
 
-| Key | Where it comes from | How it is sent |
-| --- | --- | --- |
-| Client key | SnelStart Web, the "Maatwerk" tile of the administration | In the form body of the token request |
-| Subscription key | The SnelStart B2B developer portal (usually the primary key) | In the `Ocp-Apim-Subscription-Key` header of every API call |
+| Key | What the package does with it |
+| --- | --- |
+| Client key | Exchanges it for an access token: it is posted to the token endpoint as `clientkey`, with `grant_type=clientkey`. Required. |
+| Subscription key | Sends it in the `Ocp-Apim-Subscription-Key` header of every API call. Without it the header is left out. |
+
+The config file of the package notes where they are found: the client key under the tile "Maatwerk" in SnelStart Web, and the subscription key in the B2B developer portal, where it is usually the primary key. That is a note of the package author, not documentation of SnelStart; how you get access to either is up to SnelStart.
+
+Both keys open a bookkeeping. Keep them in `.env`, never in the repository.
+
+## 3. Put them in .env
 
 ```env
 SNELSTART_CLIENT_KEY=your-client-key
 SNELSTART_SUBSCRIPTION_KEY=your-subscription-key
 ```
 
-The client key is required: without it the client throws `Snelstart API config is incomplete (token_url, client_key).` the moment it is built. The subscription key is optional for the package; without it the header is left out.
+When your application caches its config (`php artisan config:cache`, usual in production), run `php artisan config:clear` or cache it again after changing `.env`. Otherwise the old values stay in use.
 
-Both keys give access to a bookkeeping. Keep them in `.env`, never in the repository.
+That is all you need to start. Continue with [Check that it works](#check-that-it-works).
 
-## The config file
+## 4. Optional: the other settings
 
-Publishing is only needed when you want to change it:
+| Config key | Environment variable | Default | What it is |
+| --- | --- | --- | --- |
+| `base_url` | `SNELSTART_BASE_URL` | `https://b2bapi.snelstart.nl/v2` | Where the API calls go. A trailing slash is removed. |
+| `client_key` | `SNELSTART_CLIENT_KEY` | none | See above. |
+| `connect_timeout` | `SNELSTART_CONNECT_TIMEOUT` | `10` | Seconds to wait for the connection. |
+| `subscription_key` | `SNELSTART_SUBSCRIPTION_KEY` | none | See above. |
+| `timeout` | `SNELSTART_TIMEOUT` | `30` | Seconds to wait for a whole request, the token request included. |
+| `token_cache.enabled` | `SNELSTART_TOKEN_CACHE` | `true` | Keep the access token in Laravel's cache, encrypted with your `APP_KEY`. |
+| `token_cache.store` | `SNELSTART_TOKEN_CACHE_STORE` | none | A store from `config/cache.php`. None means the default store. |
+| `token_url` | `SNELSTART_TOKEN_URL` | `https://auth.snelstart.nl/b2b/token` | Where the token is fetched. |
+
+A timeout that is not a positive number gives the default. What the token cache does is explained in [How it works](concepts.md).
+
+You only need the config file in your application when an environment variable is not enough:
 
 ```bash
 php artisan vendor:publish --tag=snelstart-config
 ```
 
-| Config key | Environment variable | Default |
-| --- | --- | --- |
-| `base_url` | `SNELSTART_BASE_URL` | `https://b2bapi.snelstart.nl/v2` |
-| `client_key` | `SNELSTART_CLIENT_KEY` | none |
-| `connect_timeout` | `SNELSTART_CONNECT_TIMEOUT` | `10` seconds |
-| `subscription_key` | `SNELSTART_SUBSCRIPTION_KEY` | none |
-| `timeout` | `SNELSTART_TIMEOUT` | `30` seconds |
-| `token_cache.enabled` | `SNELSTART_TOKEN_CACHE` | `true` |
-| `token_cache.store` | `SNELSTART_TOKEN_CACHE_STORE` | none: the default cache store |
-| `token_url` | `SNELSTART_TOKEN_URL` | `https://auth.snelstart.nl/b2b/token` |
-
-A trailing slash on the base URL is removed. A timeout that is not a positive number gives the default.
-
-The access token is kept in the cache, encrypted with your `APP_KEY`, so not every web request fetches its own. Set `SNELSTART_TOKEN_CACHE=false` to keep it in memory only, or `SNELSTART_TOKEN_CACHE_STORE` to a store from `config/cache.php` to keep it out of the default store. See [How it works](concepts.md).
-
-If you published the config file before these keys existed, you don't have to add them: Laravel merges the package file underneath yours, so the defaults and the environment variables work as they are.
+This writes `config/snelstart.php`. A file you published with an older version keeps working without the newer keys: Laravel merges the package file underneath yours, so the defaults and the environment variables above still apply.
 
 In your own code, read the settings through `Darvis\Snelstart\Support\SnelstartConfig` (`baseUrl()`, `clientKey()`, `connectTimeout()`, `subscriptionKey()`, `timeout()`, `tokenCacheEnabled()`, `tokenCacheStore()`, `tokenUrl()`); the defaults live there.
 
-## Check the connection
+## Check that it works
 
 ```bash
 php artisan snelstart:test
 ```
 
-The command fetches `/companyInfo`. On success it prints `Connection successful!` and the company info as JSON, and exits with 0. On a failure it prints `Connection failed:` with the reason and exits with 1. It never prints a key or the token.
+The command fetches `/companyInfo` with your keys. When everything is right it exits with code 0 and prints this, with the company info of your administration as JSON:
+
+```text
+Testing Snelstart API connection...
+✓ Connection successful!
+Company info retrieved.
+{
+    "...": "..."
+}
+```
+
+When something is wrong it exits with code 1 and prints one of these. The part after `Response:` is what SnelStart answered; a key or a token in it is replaced by `[redacted]`.
+
+| You see | What it means |
+| --- | --- |
+| `✗ Connection failed: Snelstart API config is incomplete (token_url, client_key).` | `SNELSTART_CLIENT_KEY` is empty, or the config is cached with the old value. |
+| `✗ Connection failed: Failed to retrieve access_token from Snelstart. HTTP status: 401. Response: ...` (or `400`) | The token endpoint refused the client key. |
+| `✗ Connection failed: Snelstart API call failed. HTTP status: 401. Response: ...` | The token was accepted, the API call was not: check the subscription key. |
+| `✗ Connection failed: cURL error ...`, for example `cURL error 28` | SnelStart could not be reached (`cURL error 6`, the host name did not resolve) or did not answer within the timeout (`cURL error 28`). |
+| `There are no commands defined in the "snelstart" namespace.` | Laravel has not discovered the package: run `php artisan package:discover`. |
+
+Each of these has its cause and its fix on the [Troubleshooting](troubleshooting.md) page. The command never prints a key or the token.
+
+Next: the [Quick start](quickstart.md).
