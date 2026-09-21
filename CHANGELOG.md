@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-21
+
 ### Added
 - **The access token is kept in Laravel's cache**, encrypted with the application key, until sixty
   seconds before it expires. A web request no longer fetches its own token; it used to make one extra
@@ -140,6 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SNELSTART_CLIENT_KEY` - Custom client key
 - `SNELSTART_SUBSCRIPTION_KEY` - B2B portal subscription key
 
-[Unreleased]: https://github.com/ArvidDeJong/snelstart/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/ArvidDeJong/snelstart/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/ArvidDeJong/snelstart/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ArvidDeJong/snelstart/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ArvidDeJong/snelstart/releases/tag/v1.0.0
