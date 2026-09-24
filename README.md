@@ -93,6 +93,10 @@ composer analyse   # Larastan
 
 See [CHANGELOG](CHANGELOG.md).
 
+## Support the package
+
+If darvis/snelstart saves you time, a star on [GitHub](https://github.com/ArvidDeJong/snelstart) or a favourite on [Packagist](https://packagist.org/packages/darvis/snelstart) helps other developers find it.
+
 ## Contributing
 
 See [CONTRIBUTING](CONTRIBUTING.md).
