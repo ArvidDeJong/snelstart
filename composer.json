@@ -1,10 +1,11 @@
 {
     "name": "darvis/snelstart",
-    "description": "Laravel client for the SnelStart B2B API v2 (Dutch accounting software): client key authentication, relations, articles, sales orders and a standalone cURL client.",
+    "description": "PHP client for the SnelStart B2B API v2 (Dutch accounting software): token handling, every collection with paging, and a Laravel integration with facade, encrypted token cache and Http::fake() support.",
     "type": "library",
     "license": "MIT",
     "homepage": "https://arviddejong.github.io/snelstart/",
     "keywords": [
+        "php",
         "laravel",
         "snelstart",
         "accounting",
@@ -28,23 +29,22 @@
     },
     "require": {
         "php": "^8.2",
-        "illuminate/cache": "^11.0|^12.0|^13.0",
-        "illuminate/console": "^11.0|^12.0|^13.0",
-        "illuminate/contracts": "^11.0|^12.0|^13.0",
-        "illuminate/encryption": "^11.0|^12.0|^13.0",
-        "illuminate/http": "^11.0|^12.0|^13.0",
-        "illuminate/support": "^11.0|^12.0|^13.0",
-        "nesbot/carbon": "^2.72|^3.0"
+        "ext-json": "*"
     },
     "require-dev": {
+        "ext-curl": "*",
         "larastan/larastan": "^3.0",
         "laravel/pint": "^1.0",
         "orchestra/testbench": "^9.0|^10.0|^11.0",
         "pestphp/pest": "^3.0|^4.0",
         "pestphp/pest-plugin-laravel": "^3.0|^4.0"
     },
+    "conflict": {
+        "illuminate/support": "<11.0"
+    },
     "suggest": {
-        "ext-curl": "Required by Darvis\\Snelstart\\Standalone\\SnelstartAPI, the client for projects without Laravel."
+        "ext-curl": "Required by the default transport, for projects without Laravel.",
+        "laravel/framework": "Enables the service provider, the facade, the encrypted token cache and Http::fake() support (Laravel 11, 12 or 13)."
     },
     "autoload": {
         "psr-4": {
@@ -70,8 +70,11 @@
     },
     "extra": {
         "laravel": {
+            "aliases": {
+                "Snelstart": "Darvis\\Snelstart\\Laravel\\Facades\\Snelstart"
+            },
             "providers": [
-                "Darvis\\Snelstart\\SnelstartServiceProvider"
+                "Darvis\\Snelstart\\Laravel\\SnelstartServiceProvider"
             ]
         }
     },

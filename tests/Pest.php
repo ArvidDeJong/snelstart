@@ -2,4 +2,5 @@
 
 use Darvis\Snelstart\Tests\TestCase;
 
-uses(TestCase::class)->in('Feature');
+// tests/Unit is the plain PHP client and runs without Laravel; tests/Laravel is the integration.
+uses(TestCase::class)->in('Laravel');

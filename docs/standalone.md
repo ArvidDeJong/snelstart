@@ -1,73 +1,135 @@
 ---
-title: "Standalone client"
+title: "Without Laravel"
 nav_order: 6
-description: "Use darvis/snelstart in a PHP project without Laravel: the cURL based standalone client, its settings and timeouts, and how it differs from the Laravel client."
+description: "Use darvis/snelstart in a plain PHP project: build the client from an array or the environment, the cURL transport, and how to keep the token between runs."
 ---
 
-# Standalone client
+# Without Laravel
 
-`Darvis\Snelstart\Standalone\SnelstartAPI` does what the Laravel client does, without the container, the config or Laravel's HTTP client. It uses the PHP cURL extension.
+The client is plain PHP. Outside Laravel it needs PHP 8.2+ and the cURL extension, and nothing else: the package has no other dependencies.
 
-## Build the client from an array
-
-```php
-use Darvis\Snelstart\Standalone\SnelstartAPI;
-
-$snelstart = new SnelstartAPI([
-    'client_key' => $clientKey,
-    'subscription_key' => $subscriptionKey,
-]);
-
-$company = $snelstart->getCompanyInfo();
-$relations = $snelstart->getRelaties();
+```bash
+composer require darvis/snelstart
 ```
 
-This goes in any PHP file of your project that loads Composer's `vendor/autoload.php`. `$clientKey` and `$subscriptionKey` are the two keys SnelStart issued; read them from your own configuration, never from the source code.
-
-`base_url` and `token_url` are optional; they fall back to `https://b2bapi.snelstart.nl/v2` and `https://auth.snelstart.nl/b2b/token`. So are `timeout` and `connect_timeout`, in seconds; they fall back to 30 and 10, also when the value is not a positive number. Without a `client_key` the constructor throws `Snelstart API config is incomplete (token_url, client_key).`
-
-## Build the client from environment variables
+## Build the client
 
 ```php
-$snelstart = SnelstartAPI::fromEnv();
+use Darvis\Snelstart\Client;
+use Darvis\Snelstart\Config;
+
+$snelstart = new Client(new Config(
+    clientKey: $clientKey,
+    subscriptionKey: $subscriptionKey,
+));
 ```
 
-`fromEnv()` reads `SNELSTART_BASE_URL`, `SNELSTART_TOKEN_URL`, `SNELSTART_CLIENT_KEY`, `SNELSTART_SUBSCRIPTION_KEY`, `SNELSTART_TIMEOUT` and `SNELSTART_CONNECT_TIMEOUT` with `getenv()`. It does not load a `.env` file; the variables have to be in the real environment.
+Or from loose values, such as your own config file, where an empty or missing value gives the default:
 
-## Which of the two clients do I use?
+```php
+$snelstart = new Client(Config::fromArray([
+    'client_key' => $settings['snelstart_client_key'],
+    'subscription_key' => $settings['snelstart_subscription_key'],
+    'timeout' => 15,
+]));
+```
 
-| | `Services\SnelstartAPI` | `Standalone\SnelstartAPI` |
+Or from the environment, with `SNELSTART_CLIENT_KEY` and `SNELSTART_SUBSCRIPTION_KEY` set:
+
+```php
+$snelstart = Client::fromEnv();
+```
+
+The package reads `$_ENV` and `getenv()`. It does not load a `.env` file; use your own loader for that.
+
+## Use it
+
+Everything on the other pages applies; only the facade is Laravel.
+
+```php
+use Darvis\Snelstart\Exceptions\SnelstartException;
+
+try {
+    foreach ($snelstart->artikelen()->all() as $artikel) {
+        echo $artikel['artikelcode'], PHP_EOL;
+    }
+
+    $order = $snelstart->verkooporders()->create($data);
+} catch (SnelstartException $e) {
+    error_log($e->status().' '.implode(', ', $e->errorCodes()).' '.$e->getMessage());
+}
+```
+
+## How it differs from Laravel
+
+| | Without Laravel | In Laravel |
 | --- | --- | --- |
-| Meant for | A Laravel application | A project without Laravel |
-| Settings | `config/snelstart.php` and `.env` | An array, or `getenv()` |
-| Built by | The container, as a singleton | You, with `new` or `fromEnv()` |
-| HTTP | Laravel's HTTP client | cURL |
-| Fake in tests | `Http::fake()` | Not possible; point `base_url` and `token_url` at your own test server |
-| Timeout | 30 seconds, 10 to connect, from the config | 30 seconds, 10 to connect, from the array |
-| Access token | In memory and, encrypted, in Laravel's cache | In memory, on the instance |
-| Connection error | `Illuminate\Http\Client\ConnectionException`, unchanged | `SnelstartException` with `cURL error: ...` and status `0` |
-| Lock around the token request | Yes, on the cache store | No: there is no cache to share |
-| Error body in the message | JSON is decoded and encoded again | The body as it was received |
+| Requests are sent with | PHP cURL (`Http\CurlTransport`) | Laravel's HTTP client (`Laravel\HttpTransport`) |
+| The token is kept | in memory, for as long as the PHP process lives | in the cache, encrypted, and in memory |
+| Settings come from | the `Config` you build | `config/snelstart.php` and `.env` |
+| In tests | `Testing\FakeTransport` | `Http::fake()`, or `Testing\FakeTransport` |
+| Connection test | `$snelstart->echo()` and `$snelstart->companyInfo()` | `php artisan snelstart:test` |
 
-The methods, the one repeat after a refused token, the `SnelstartException` with its status and messages, and the redaction of the keys are the same. Inside Laravel, use the Laravel client: it is the one `snelstart:test` and `EchoService` use, and the only one your tests can fake.
+The client itself is the same class, so there is no difference in behaviour to remember.
 
-## A call that needs more than 30 seconds
+## Keep the token between runs
 
-Up to 1.1 the standalone client had no timeout at all. It now gives up after 30 seconds with `cURL error: Operation timed out ...`. For a call that really needs longer, raise it:
+In a web application without Laravel every request is a new PHP process, and each one fetches its own token. That works, and it costs one extra call per request. To share the token, give the client a token store of your own: implement `Darvis\Snelstart\Token\TokenStore` on what you have (APCu, Redis, a database).
 
 ```php
-$snelstart = new SnelstartAPI([
-    'client_key' => $clientKey,
-    'subscription_key' => $subscriptionKey,
-    'timeout' => 120,
-]);
+use Darvis\Snelstart\Token\TokenStore;
+
+final class ApcuTokenStore implements TokenStore
+{
+    public function get(string $key): ?string
+    {
+        $token = apcu_fetch($key, $found);
+
+        return $found && is_string($token) ? $token : null;
+    }
+
+    public function put(string $key, string $token, int $seconds): void
+    {
+        apcu_store($key, $token, $seconds);
+    }
+
+    public function forget(string $key): void
+    {
+        apcu_delete($key);
+    }
+
+    public function synchronized(string $key, int $seconds, callable $callback): mixed
+    {
+        return $callback();
+    }
+}
+
+$snelstart = new Client($config, null, new ApcuTokenStore);
 ```
 
-Because the token lives on the instance, a script that builds a new client for every call also fetches a new token for every call. Build it once and pass it around.
+Three rules for a store:
 
-## Requirements
+- It never throws. When it cannot keep a token, the client fetches one more.
+- `get()` returns `null` for a token that has expired.
+- The token opens a bookkeeping. APCu memory belongs to your own PHP processes; a store that others can read, such as a shared Redis or a file, needs the token encrypted.
 
-- PHP 8.2+
-- The cURL extension
+`synchronized()` may run the callback under a lock, so that processes which find the store empty at the same moment make one token request. Running it without a lock, as above, is always correct.
 
-Composer installs the `illuminate/*` packages the Laravel client needs in every project; the standalone client does not load them.
+## Your own transport
+
+`Darvis\Snelstart\Http\Transport` has one method. Implement it to send the requests with the HTTP client your project already has, for example to get its logging or its proxy settings:
+
+```php
+use Darvis\Snelstart\Http\Response;
+use Darvis\Snelstart\Http\Transport;
+
+final class MyTransport implements Transport
+{
+    public function send(string $method, string $url, array $headers, ?string $body, float $timeout, float $connectTimeout): Response
+    {
+        // Send it, and return new Response($status, $rawBody) for every answer, a 4xx or 5xx included.
+        // Throw when there was no answer. Do not retry and do not follow redirects.
+        // The headers hold the keys: keep them and the body out of exception messages.
+    }
+}
+```

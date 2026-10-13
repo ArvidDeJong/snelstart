@@ -231,22 +231,51 @@ test('every page is linked from the home page, and every relative link points at
 test('the messages the docs quote exist in the source', function () {
     $source = '';
 
-    foreach (['Services/SnelstartAPI.php', 'Standalone/SnelstartAPI.php', 'Console/Commands/TestSnelstartConnection.php', 'Services/EchoService.php'] as $file) {
+    foreach (['Client.php', 'Resource.php', 'Laravel/CacheTokenStore.php', 'Laravel/Console/TestConnectionCommand.php'] as $file) {
         $source .= file_get_contents(dirname(__DIR__).'/src/'.$file);
     }
 
     foreach ([
-        'Snelstart API config is incomplete (token_url, client_key).',
+        'Snelstart config is incomplete: the client key is empty.',
         'Failed to retrieve access_token from Snelstart.',
         'Snelstart token response does not contain access_token.',
         'Snelstart API call failed.',
+        'Snelstart API call failed. No response: ',
+        'Snelstart request data cannot be sent as JSON',
+        'Snelstart paging does not advance',
         'Snelstart token cache is not available, the token is kept in memory only',
-        'Connection successful!',
-        'Connection failed: ',
-        'Company info retrieved.',
         'Testing Snelstart API connection...',
+        'Subscription key accepted.',
+        'Subscription key check failed: ',
+        'Client key accepted.',
+        'Client key check failed: ',
+        'Connection successful!',
     ] as $message) {
         expect($source)->toContain($message);
         expect(file_get_contents(docsPath('troubleshooting.md')).file_get_contents(docsPath('installation.md')))->toContain(rtrim($message, ': '));
+    }
+});
+
+test('the docs name no class that does not exist', function () {
+    $text = file_get_contents(dirname(__DIR__).'/README.md')
+        .file_get_contents(dirname(__DIR__).'/resources/boost/guidelines/core.blade.php')
+        .file_get_contents(dirname(__DIR__).'/resources/boost/skills/snelstart-development/SKILL.md')
+        .file_get_contents(docsPath('_data/faq.yml'));
+
+    foreach (glob(docsPath('*.md')) as $page) {
+        // The upgrade page and the troubleshooting entry about it name the classes of 1.x on purpose.
+        if (basename($page) !== 'upgrading.md') {
+            $text .= preg_replace('/^## Class "Darvis.*$/m', '', (string) file_get_contents($page));
+        }
+    }
+
+    preg_match_all('/Darvis\\\\Snelstart(?:\\\\[A-Z][A-Za-z]+)+/', $text, $names);
+
+    $classes = array_unique($names[0]);
+
+    expect(count($classes))->toBeGreaterThan(10);
+
+    foreach ($classes as $class) {
+        expect(class_exists($class) || interface_exists($class))->toBeTrue($class.' is named in the docs and does not exist');
     }
 });

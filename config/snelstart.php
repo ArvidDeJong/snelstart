@@ -7,7 +7,7 @@ return [
     | SnelStart B2B API
     |--------------------------------------------------------------------------
     |
-    | Read these values through Darvis\Snelstart\Support\SnelstartConfig. The
+    | Read these values through Darvis\Snelstart\Laravel\SnelstartConfig. The
     | keys are in alphabetical order.
     |
     */
@@ -15,11 +15,15 @@ return [
     // Base URL of the v2 API.
     'base_url' => env('SNELSTART_BASE_URL', 'https://b2bapi.snelstart.nl/v2'),
 
-    // Your client key (tile "Maatwerk" in SnelStart Web). Sent in the body of the token request.
+    // The client key ("koppelsleutel") of the administration, from SnelStart Web. Sent in the
+    // body of the token request. For more than one administration: Snelstart::withClientKey().
     'client_key' => env('SNELSTART_CLIENT_KEY'),
 
     // Seconds to wait for the connection to SnelStart. Not a positive number: 10.
     'connect_timeout' => env('SNELSTART_CONNECT_TIMEOUT', 10),
+
+    // Base URL of the Echo API, which snelstart:test uses to check the subscription key.
+    'echo_url' => env('SNELSTART_ECHO_URL', 'https://b2bapi.snelstart.nl/echo'),
 
     // Subscription key from the B2B developer portal (usually the primary key). Sent as a header.
     'subscription_key' => env('SNELSTART_SUBSCRIPTION_KEY'),

@@ -1,6 +1,6 @@
 ---
 name: snelstart-development
-description: Work with darvis/snelstart. Use it to read or write relations, articles, sales orders or any other endpoint of the SnelStart B2B API from a Laravel app, to handle a failed or refused call, a 401, a timeout, an expired or cached token, to choose between the Laravel client and the standalone client, and to test code that talks to SnelStart without calling it.
+description: Work with darvis/snelstart. Use it to read or write relations, articles, sales orders, invoices, bookings or any other endpoint of the SnelStart B2B API from a Laravel or plain PHP app, to page through a collection, to handle a failed call, a SnelStart error code, a 401 or a timeout, to work with several administrations, and to test code that talks to SnelStart without calling it.
 ---
 
 # darvis/snelstart development
@@ -9,141 +9,162 @@ description: Work with darvis/snelstart. Use it to read or write relations, arti
 
 Use this skill when code reads from or writes to SnelStart in an application that has `darvis/snelstart` installed, when a call throws or `php artisan snelstart:test` fails, when you have to decide where the keys go, or when you write tests around such code.
 
+## The parts
+
+| Class | What it is |
+| --- | --- |
+| `Darvis\Snelstart\Client` | The client. Plain PHP. In Laravel a singleton, alias `snelstart`, facade `Darvis\Snelstart\Laravel\Facades\Snelstart` |
+| `Darvis\Snelstart\Resource` | One collection: `list()`, `all()`, `find()`, `create()`, `update()`, `delete()` |
+| `Darvis\Snelstart\Config` | Immutable settings: keys, URLs, timeouts |
+| `Darvis\Snelstart\Exceptions\SnelstartException` | The only exception: `status()`, `errorCodes()`, `hasErrorCode()`, `errors()` |
+| `Darvis\Snelstart\ErrorCodes` | The 272 error codes SnelStart publishes, with their Dutch texts |
+| `Darvis\Snelstart\Http\Transport` | How a request is sent: `Http\CurlTransport` or `Laravel\HttpTransport` |
+| `Darvis\Snelstart\Token\TokenStore` | Where the token is kept: `Token\MemoryTokenStore` or `Laravel\CacheTokenStore` |
+| `Darvis\Snelstart\Testing\FakeTransport` | A transport for tests |
+
 ## How a call runs
 
-1. `Darvis\Snelstart\Services\SnelstartAPI` is a singleton. It reads the config once, when it is first resolved, and throws `Snelstart API config is incomplete (token_url, client_key).` without a client key.
-2. Before a call it looks for a token on the instance, then in Laravel's cache (encrypted with `APP_KEY`, key `snelstart.token.<sha256 of token URL and client key>`). Without one, or within sixty seconds of its expiry, it posts `grant_type=clientkey` and `clientkey=<key>` as a form to the token URL. Without `expires_in` it assumes 3600 seconds.
-3. The call goes to `base_url` plus the path with `Authorization: Bearer <token>`, `Accept: application/json` and, when set, `Ocp-Apim-Subscription-Key`.
-4. A 401 on a token the client already had (memory or cache): it forgets the token, fetches a new one and repeats the request once.
-5. A 4xx or 5xx throws. Anything else is decoded and returned as an array. Every request has a timeout of 30 seconds, 10 to connect.
+1. The client looks for a token in the token store. In Laravel that is memory, then the cache (encrypted with `APP_KEY`, key `snelstart.token.<sha256 of token URL and client key>`).
+2. Without one it posts `grant_type=clientkey` and `clientkey=<key>` as a form to the token URL, under a lock in Laravel. The token is kept until sixty seconds before `expires_in` (3600 when absent).
+3. The call goes to `base_url` plus the path with `Authorization: Bearer <token>`, `Accept: application/json` and `Ocp-Apim-Subscription-Key`. A query array is RFC 3986 encoded, a data array is sent as JSON.
+4. A 401 on a token the client already had: it forgets the token, fetches a new one and repeats the request once.
+5. A 4xx or 5xx throws. Anything else is decoded and returned.
 
 | Situation | Result | `$e->status()` |
 | --- | --- | --- |
 | 2xx, JSON object or list | the decoded array | |
-| 2xx, empty body or `HEAD` | `[]` | |
-| 2xx, body that is not a JSON object or list | `[]` | |
-| 401 on a token the client already had | new token, the call is repeated once; a second 401 throws as below | `401` |
-| 401 on a token fetched for this call | not repeated, throws as below | `401` |
-| 4xx or 5xx (429 and 5xx are never retried) | `SnelstartException`: `Snelstart API call failed. HTTP status: <status>. Response: <body>` | that status |
+| 2xx, empty body | `null` from `get()`/`post()`/`put()`/`delete()`, `[]` from a resource method | |
+| 401 on a token the client already had | new token, the call is repeated once; a second 401 throws | `401` |
+| 401 on a token fetched for this call | not repeated, throws | `401` |
+| 400 with SnelStart error codes | `SnelstartException`, codes in `errorCodes()` and `errors()` | `400` |
+| Any other 4xx or 5xx (never retried) | `SnelstartException`: `Snelstart API call failed. HTTP status: <status>. Response: <body>` | that status |
 | Token endpoint 4xx or 5xx (never retried) | `SnelstartException`: `Failed to retrieve access_token from Snelstart. HTTP status: <status>. Response: <body>` | that status |
-| Token response without `access_token` | `SnelstartException`: `Snelstart token response does not contain access_token.` | the status of that response, `200` |
-| No client key | `SnelstartException` when the client is built | `0` |
-| Timeout, DNS, refused connection | `Illuminate\Http\Client\ConnectionException` after `snelstart.timeout` (30) or `snelstart.connect_timeout` (10) seconds; NOT a `SnelstartException` | none |
+| Timeout, DNS, refused connection | `SnelstartException`: `Snelstart API call failed. No response: ...`, the cause in `getPrevious()` | `0` |
+| No client key | `SnelstartException` on the first call that needs a token: `Snelstart config is incomplete: the client key is empty.` | `0` |
 | Cache store down, unknown store, no `APP_KEY`, a lock that throws | one `Log::warning()` (`Snelstart token cache is not available, ...`), the token stays in memory, calls work | |
-| Cached value that cannot be decrypted | treated as no token: removed, a new token is fetched, nothing throws | |
-| Another request is fetching a token | waits at most five seconds for its lock, then uses its token or fetches one itself | |
-| Cache store without lock support | no lock, no log line, calls work | |
 
-`Darvis\Snelstart\Exceptions\SnelstartException` extends `RuntimeException`; `status()` and `getCode()` are the HTTP status, `0` without a response. The messages are the same as before the class existed.
+## Reading
 
 ```php
+use Darvis\Snelstart\Laravel\Facades\Snelstart;
+
+// One call, at most 500 rows.
+$first = Snelstart::relaties()->list(['$top' => 25]);
+
+// Everything, 500 at a time, fetched while you loop.
+foreach (Snelstart::relaties()->all(['$filter' => "Relatiesoort/any(r:r eq 'Klant')"]) as $relatie) {
+    // ...
+}
+
+$relatie = Snelstart::relaties()->find($id);
+$company = Snelstart::companyInfo();
+$fields = Snelstart::get("relaties/{$id}/customFields");
+```
+
+- `list()` on a large collection silently gives the first 500 rows only. For "all customers", "every invoice", a sync or an export, use `all()`.
+- `all()` is a generator: `iterator_to_array()` it only when you need the whole list in memory.
+- Collections without paging in the SnelStart documentation (`landen()`, `dagboeken()`, `kostenplaatsen()`, `btwtarieven()`, `artikelomzetgroepen()`, `verkoopordersjablonen()`) are one call in `all()` too.
+- `prijsafspraken()` needs a `$filter` on `Artikel/Id`.
+- A collection that has no method: `Snelstart::resource('artikelen/prijsafspraken')->all()`.
+
+## Writing
+
+```php
+$relatie = Snelstart::relaties()->create(['relatiesoort' => ['Klant'], 'naam' => 'Example B.V.']);
+
+$relatie['email'] = 'info@example.com';
+$relatie = Snelstart::relaties()->update($relatie['id'], $relatie);   // the whole row
+
+Snelstart::relaties()->delete($relatie['id']);
+```
+
+- A reference to another row is an array with its id: `'relatie' => ['id' => $relatieId]`, `'artikel' => ['id' => $artikelId]`.
+- `update()` sends a `PUT`; the API documents the whole model for it. Fetch the row, change it, send it back.
+- Dates are ISO 8601 strings; amounts are numbers. Don't invent fields: take them from a response or the SnelStart documentation.
+- Write from a queued job. Rethrow for status `0`, `429` and `>= 500` so the queue retries; `fail()` for other statuses.
+
+## Error codes
+
+```php
+use Darvis\Snelstart\ErrorCodes;
 use Darvis\Snelstart\Exceptions\SnelstartException;
-use Illuminate\Http\Client\ConnectionException;
 
 try {
-    $order = $snelstart->createVerkooporder($payload);
-} catch (ConnectionException $e) {
-    // No answer. The order may exist: look it up before sending it again.
+    Snelstart::relaties()->create($data);
 } catch (SnelstartException $e) {
-    match (true) {
-        $e->status() === 404 => $this->markRelationAsMissing(),
-        $e->status() === 429, $e->status() >= 500 => $this->release(300),
-        default => $this->fail($e),
-    };
+    if ($e->hasErrorCode('REL-0008')) {
+        // Relatiecode reeds in gebruik
+    }
+
+    foreach ($e->errors() as $code => $meaning) {
+        logger()->warning("SnelStart refused the relation: {$code} {$meaning}");
+    }
 }
+
+ErrorCodes::message('BOE-0021');    // 'Het factuurnummer bestaat al'
+ErrorCodes::resource('BOE-0021');   // 'Boekingen'
 ```
 
-## Scenarios
+The prefixes: `ALG` general, `ART` articles, `BLG` attachments, `BOE` bookings, `BTW` VAT returns, `KPL` cost centres, `REF` extra fields, `REL` relations, `VOR` sales orders. The texts are Dutch and written for a developer; translate them yourself before you show one to a user.
 
-### Read a list
+## More than one administration
 
 ```php
-$relations = app(SnelstartAPI::class)->getRelaties($query);
+$snelstart = Snelstart::withClientKey($company->snelstart_client_key);
+
+$snelstart->relaties()->all();
 ```
 
-`$query` is an array that becomes the query string as it is; which parameters an endpoint accepts is in the SnelStart API documentation, the package does not know them. The package does not page for you: one call is one request.
+`withClientKey()` returns a new client with the same subscription key, transport and token store. Tokens are kept per client key. Keep the client keys in an `encrypted` cast, never in plain text and never in a log line.
 
-### Write from a job
+## Without Laravel
 
 ```php
-public function handle(SnelstartAPI $snelstart): void
-{
-    $order = $snelstart->createVerkooporder($this->payload);
+use Darvis\Snelstart\Client;
+use Darvis\Snelstart\Config;
 
-    // $order is the decoded response of SnelStart, unchanged. Store what you need from it.
-    $this->order->update(['snelstart_response' => $order]);
-}
+$snelstart = new Client(new Config($clientKey, $subscriptionKey));
+// or: new Client(Config::fromArray([...])), Client::fromEnv()
 ```
 
-Give the job `$tries` and `$backoff`; the package never retries. After a `ConnectionException` on a write, look the record up before you send it again, or you book it twice.
-
-### An endpoint without a convenience method
-
-```php
-$relation = $snelstart->get('/relaties/'.$id);
-$snelstart->put('/relaties/'.$id, $data);
-$snelstart->delete('/relaties/'.$id);
-```
-
-### Check the connection
-
-`php artisan snelstart:test` prints `Connection successful!` and the company info, or `Connection failed: <message>`, and exits with 0 or 1. In code, `app(EchoService::class)->getEchoResource()` returns `['success' => true|false, 'message' => ..., ...]` and never throws.
-
-## Pitfalls
-
-- **Catching only `SnelstartException` or `RuntimeException` misses timeouts.** `ConnectionException` extends neither, and the package leaves it as it is.
-- **Don't parse the status out of the message.** `$e->status()` has it. `0` means there was no response (incomplete config), not "no error". `EchoService` returns the same number as `error_code`.
-- **The response body is only in the message**, not a property, and the message can hold data of the administration. Log it, don't show it to end users.
-- **Don't retry a 401 yourself.** The client already did, once, with a new token. A 401 that reaches your code is about the subscription key or the rights of the client key, and a loop around it only burns calls.
-- **Don't cache the token yourself**, and never put it in the session, the database or a log. The client keeps it encrypted in the cache; `forgetToken()` drops it, `php artisan cache:clear` does too and is harmless.
-- **The token cache needs a store that persists.** With the `array` or `null` store every request fetches its own token again. `SNELSTART_TOKEN_CACHE_STORE` picks another store.
-- **A long call is cut off at 30 seconds.** Raise `SNELSTART_TIMEOUT` for an endpoint that really needs longer, don't wrap the call in a retry.
-- **The config is read once.** Changing `snelstart.*` at runtime, or in a test after the client was resolved, has no effect until `forgetInstance()`.
-- **An empty `$data` array sends no body**, not `{}` or `[]`.
-- **`[]` does not mean "no records"** by itself: a 204 and a body that is not JSON give `[]` too.
-- **Don't use `Standalone\SnelstartAPI` in a Laravel app.** `Http::fake()` and `Http::preventStrayRequests()` do not see it, so a test would call the real API, and its token is not cached.
-- **Never put a key in a URL, a log line, an exception message or command output**, not even the first characters. The package redacts the keys and the token in its own messages; the rest of a response body can hold data of the administration, so don't show exception messages to end users.
-- There is no facade and there are no models; `Snelstart::` does not exist.
-
-## Settings
-
-| Config key | Environment variable | Default |
-| --- | --- | --- |
-| `snelstart.base_url` | `SNELSTART_BASE_URL` | `https://b2bapi.snelstart.nl/v2` |
-| `snelstart.client_key` | `SNELSTART_CLIENT_KEY` | none, required |
-| `snelstart.connect_timeout` | `SNELSTART_CONNECT_TIMEOUT` | `10` seconds |
-| `snelstart.subscription_key` | `SNELSTART_SUBSCRIPTION_KEY` | none, header left out |
-| `snelstart.timeout` | `SNELSTART_TIMEOUT` | `30` seconds |
-| `snelstart.token_cache.enabled` | `SNELSTART_TOKEN_CACHE` | `true` |
-| `snelstart.token_cache.store` | `SNELSTART_TOKEN_CACHE_STORE` | none, the default cache store |
-| `snelstart.token_url` | `SNELSTART_TOKEN_URL` | `https://auth.snelstart.nl/b2b/token` |
-
-Read them through `Darvis\Snelstart\Support\SnelstartConfig`: `baseUrl()` (no trailing slash), `clientKey()` (empty string when not set), `subscriptionKey()` (null when empty), `tokenUrl()`, `timeout()` and `connectTimeout()` (floats, the default when the value is not a positive number), `tokenCacheEnabled()` and `tokenCacheStore()`. Publish the file with `php artisan vendor:publish --tag=snelstart-config`.
+The same class and the same methods. It sends with cURL and keeps the token in memory; pass your own `Transport` or `TokenStore` as second and third argument to change either.
 
 ## Testing
 
-Never call SnelStart from a test.
+In Laravel:
 
 ```php
-use Darvis\Snelstart\Services\SnelstartAPI;
-use Illuminate\Support\Facades\Http;
-
 Http::preventStrayRequests();
-config(['snelstart.client_key' => 'test-client-key']);
+config(['snelstart.client_key' => 'test-client-key', 'cache.default' => 'array']);
 
 Http::fake([
     'auth.snelstart.nl/*' => Http::response(['access_token' => 'test-token', 'expires_in' => 3600]),
-    'b2bapi.snelstart.nl/v2/relaties*' => Http::response([['id' => 'r1', 'naam' => 'Example B.V.']]),
+    'b2bapi.snelstart.nl/*' => Http::response([['naam' => 'Example B.V.']]),
 ]);
-
-expect(app(SnelstartAPI::class)->getRelaties())->toHaveCount(1);
-
-Http::assertSent(fn ($request) => $request->hasHeader('Authorization', 'Bearer test-token'));
 ```
 
-- Set the client key before the client is resolved, or call `app()->forgetInstance(SnelstartAPI::class)` after changing it.
-- **The cached token.** On the `array` store (Laravel's `phpunit.xml` sets `CACHE_STORE=array`) every test starts without a token. On a store that persists, a token from one test is reused in the next: the token fake is not called and `Http::assertSentCount()` is one lower. Use `Cache::flush()` in `beforeEach`, set `SNELSTART_TOKEN_CACHE=false` in `phpunit.xml`, or call `app(SnelstartAPI::class)->forgetToken()`.
-- **A 401 fake is called twice** when an earlier call in the same test succeeded (the held token is replaced and the call repeated), and once when it is the first call.
-- A refused call: `Http::response(['message' => 'Too many requests'], 429)` and `->toThrow(SnelstartException::class, 'HTTP status: 429')`; to assert on the number, catch it and `expect($e->status())->toBe(429)`.
-- A timeout: a fake that throws `new ConnectionException('cURL error 28')`.
-- An expired token: `$this->travel(1)->hours()` between two calls, then `Http::assertSentCount(4)`.
+- A failure with codes: `Http::response([['errorCode' => 'REL-0007']], 400)`. The package finds the codes anywhere in the body.
+- A timeout: a closure that throws `Illuminate\Http\Client\ConnectionException`. The code under test sees a `SnelstartException` with status `0`.
+- `all()` asks for a next page after a full one: return fewer than 500 rows.
+
+Anywhere:
+
+```php
+use Darvis\Snelstart\Testing\FakeTransport;
+
+$transport = (new FakeTransport)->respond('relaties', [['naam' => 'Example B.V.']]);
+$snelstart = new Client(new Config('test-client-key', 'test-subscription-key'), $transport);
+
+$transport->sent('relaties');   // method, url, headers and body of each request
+```
+
+In Laravel, `app()->instance(\Darvis\Snelstart\Http\Transport::class, $transport)` makes the facade use it.
+
+## Don't
+
+- Don't call the API with `Http::` or fetch a token yourself.
+- Don't put a key or the token in a URL, a log line, an exception message or command output.
+- Don't retry a 401 yourself, and don't retry a write after a timeout without checking whether it arrived.
+- Don't catch `Illuminate\Http\Client\ConnectionException` around a SnelStart call: it never arrives; catch `SnelstartException` and check for status `0`.
+- Don't read settings with `config('snelstart.…')`; use `Snelstart::config()`.
+- Don't use the class names of 1.x (`Services\SnelstartAPI`, `Standalone\SnelstartAPI`, `EchoService`, `getRelaties()`): they are gone.

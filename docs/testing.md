@@ -1,172 +1,127 @@
 ---
 title: "Testing"
 nav_order: 7
-description: "Test Laravel code that uses darvis/snelstart without calling SnelStart: a complete Pest example with Http::fake(), the cached token and an expired token."
+description: "Test code that uses darvis/snelstart without calling SnelStart: Http::fake() in Laravel, FakeTransport in plain PHP, and how to fake a failure with codes."
 ---
 
 # Testing
 
-Never call SnelStart from a test: it is somebody's bookkeeping. The Laravel client sends everything through Laravel's HTTP client, so `Http::fake()` (which answers requests without sending them) covers it.
+Never call SnelStart from a test: the keys open a real bookkeeping. There are two ways to keep a test away from it.
 
-## A complete test
+## In Laravel: Http::fake()
 
-This tests the controller of the [Quick start](quickstart.md). The client makes two kinds of requests, to two hosts: the token endpoint and the API. Fake both, and block everything else.
+The package sends its requests with Laravel's HTTP client, so `Http::fake()` sees them. Fake two hosts: the token endpoint and the API.
 
-`tests/Feature/SnelstartCompanyTest.php`
+`tests/Feature/SnelstartCustomersTest.php`, for the command of the [Quick start](quickstart.md):
 
 ```php
 <?php
 
-use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 
 beforeEach(function () {
-    // A request that no fake answers fails the test instead of reaching SnelStart.
+    // A request you forgot to fake fails the test instead of reaching SnelStart.
     Http::preventStrayRequests();
 
-    // Without a client key the client throws the moment it is built.
-    config(['snelstart.client_key' => 'test-client-key']);
+    config([
+        'snelstart.client_key' => 'test-client-key',
+        'snelstart.subscription_key' => 'test-subscription-key',
+        'cache.default' => 'array',
+    ]);
 });
 
-it('shows the company info', function () {
+function fakeSnelstart(mixed $api): void
+{
     Http::fake([
         'auth.snelstart.nl/*' => Http::response(['access_token' => 'test-token', 'expires_in' => 3600]),
-        'b2bapi.snelstart.nl/v2/companyInfo' => Http::response(['naam' => 'Example B.V.']),
+        'b2bapi.snelstart.nl/*' => $api,
     ]);
+}
 
-    $this->get('/snelstart/company')
-        ->assertOk()
-        ->assertJson(['naam' => 'Example B.V.']);
+test('it lists the customers', function () {
+    fakeSnelstart(Http::response([
+        ['relatiecode' => 1001, 'naam' => 'Example B.V.'],
+    ]));
 
-    Http::assertSent(fn ($request) => $request->url() === 'https://b2bapi.snelstart.nl/v2/companyInfo'
+    $this->artisan('snelstart:customers')
+        ->expectsOutput('1001  Example B.V.')
+        ->assertExitCode(0);
+
+    Http::assertSent(fn (Request $request) => str_starts_with($request->url(), 'https://b2bapi.snelstart.nl/v2/relaties?')
         && $request->hasHeader('Authorization', 'Bearer test-token'));
 });
 
-it('says so when SnelStart refuses the call', function () {
-    Http::fake([
-        'auth.snelstart.nl/*' => Http::response(['access_token' => 'test-token']),
-        'b2bapi.snelstart.nl/*' => Http::response(['message' => 'Too many requests'], 429),
-    ]);
+test('it creates a customer', function () {
+    fakeSnelstart(Http::response(['id' => 'abc', 'naam' => 'Example B.V.'], 201));
 
-    $this->get('/snelstart/company')
-        ->assertStatus(502)
-        ->assertJson(['error' => 'Too many calls, try again later.']);
+    $this->artisan('snelstart:customers', ['--add' => 'Example B.V.'])->assertExitCode(0);
+
+    // The URL first: the token request is a POST too, and it has no 'naam'.
+    Http::assertSent(fn (Request $request) => $request->url() === 'https://b2bapi.snelstart.nl/v2/relaties'
+        && $request->method() === 'POST'
+        && $request['naam'] === 'Example B.V.');
 });
 
-it('says so when SnelStart does not answer', function () {
-    Http::fake([
-        'auth.snelstart.nl/*' => Http::response(['access_token' => 'test-token']),
-        'b2bapi.snelstart.nl/*' => fn () => throw new ConnectionException('cURL error 28: Operation timed out'),
-    ]);
+test('it explains what SnelStart refused', function () {
+    fakeSnelstart(Http::response([['errorCode' => 'REL-0007']], 400));
 
-    $this->get('/snelstart/company')->assertStatus(504);
+    $this->artisan('snelstart:customers', ['--add' => 'x'])
+        ->expectsOutput('REL-0007: Naam moet gevuld zijn')
+        ->assertExitCode(2);
 });
-```
 
-The example is written for Pest. The first test proves the token was fetched and sent; the second and third prove what your user sees when SnelStart refuses or is silent. The response bodies in the fakes are made up for the test: the package does not care what is in them.
+test('it survives SnelStart being down', function () {
+    fakeSnelstart(Http::response('Service Unavailable', 503));
 
-Two things to remember:
-
-- Set `snelstart.client_key` before the client is used, as `beforeEach` does.
-- The client is a singleton that reads the config once. After changing the config inside a test, call `app()->forgetInstance(\Darvis\Snelstart\Services\SnelstartAPI::class)`.
-
-## The cached token
-
-The client keeps its token in the cache. With the `array` cache store, which the `phpunit.xml` of a new Laravel application sets with `CACHE_STORE=array`, every test starts without a token and nothing changes for you.
-
-When your tests run on a store that persists (file, Redis, database), the token of one test is still there in the next: the token endpoint is not called again, so an `Http::assertSentCount()` is one lower than you expect, and a fake that returns another token is ignored. Pick one:
-
-```xml
-<env name="SNELSTART_TOKEN_CACHE" value="false"/>
-```
-
-```php
-use Illuminate\Support\Facades\Cache;
-
-beforeEach(fn () => Cache::flush());
-```
-
-The first goes in `phpunit.xml`, inside `<php>`; the second in the test file or in `tests/Pest.php`. Inside a test, `app(SnelstartAPI::class)->forgetToken()` drops the token, in memory and in the cache.
-
-## Assert on the request a write sends
-
-```php
-Http::assertSent(function ($request) {
-    return $request->method() === 'POST'
-        && $request->url() === 'https://b2bapi.snelstart.nl/v2/relaties'
-        && $request['naam'] === 'Example B.V.'
-        && $request->hasHeader('Authorization', 'Bearer test-token');
+    $this->artisan('snelstart:customers')
+        ->expectsOutput('SnelStart is not available right now.')
+        ->assertExitCode(1);
 });
 ```
 
-## Assert on the status of a failure
+Things to know:
 
-When you test a class of your own instead of a URL, assert on the exception and its status:
+- **Set a client key.** Without one the client throws before it sends anything.
+- **Keep the test cache on the `array` store**, or set `snelstart.token_cache.enabled` to `false`. Otherwise a token cached by one test travels to the next, and your count of token requests is off.
+- **The error body above is an example.** The package finds SnelStart error codes anywhere in a response, so the shape of the body does not matter for your test.
+- **A timeout** is faked with a closure that throws: `'b2bapi.snelstart.nl/*' => fn () => throw new ConnectionException('timed out')`. The client turns it into a `SnelstartException` with status `0`.
+- **Paging**: `all()` asks for a next page after a full one. A fake that always returns the same 500 rows ends in `Snelstart paging does not advance`; return fewer rows than the page size, or use `Http::sequence()`.
 
-```php
-use Darvis\Snelstart\Exceptions\SnelstartException;
-use Darvis\Snelstart\Services\SnelstartAPI;
-use Illuminate\Support\Facades\Http;
+## Without Laravel: FakeTransport
 
-it('gets a 429 as a SnelstartException', function () {
-    Http::fake([
-        'auth.snelstart.nl/*' => Http::response(['access_token' => 'test-token']),
-        'b2bapi.snelstart.nl/*' => Http::response(['message' => 'Too many requests'], 429),
-    ]);
-
-    try {
-        app(SnelstartAPI::class)->getRelaties();
-        $this->fail('Expected a SnelstartException.');
-    } catch (SnelstartException $e) {
-        expect($e->status())->toBe(429)
-            ->and($e->getMessage())->toContain('HTTP status: 429');
-    }
-});
-```
-
-`SnelstartException` extends `RuntimeException`, so an assertion on `RuntimeException::class` you already have still passes.
-
-## An expired token
-
-The Laravel client uses the application clock, so travel in time. With the fakes of the first test in place:
+`Darvis\Snelstart\Testing\FakeTransport` is a transport that answers from a list and records what was sent. It works in any test framework, and in Laravel too.
 
 ```php
-$api = app(SnelstartAPI::class);
-$api->getCompanyInfo();
+use Darvis\Snelstart\Client;
+use Darvis\Snelstart\Config;
+use Darvis\Snelstart\Http\Response;
+use Darvis\Snelstart\Testing\FakeTransport;
 
-$this->travel(1)->hours();
-$api->getCompanyInfo();
+$transport = (new FakeTransport)
+    ->respond('relaties', [['relatiecode' => 1001, 'naam' => 'Example B.V.']])
+    ->respond('POST https://b2bapi.snelstart.nl/v2/relaties', new Response(400, '[{"errorCode":"REL-0007"}]'));
 
-Http::assertSentCount(4);   // two token requests, two API calls
+$snelstart = new Client(new Config('test-client-key', 'test-subscription-key'), $transport);
+
+$snelstart->relaties()->list();          // [['relatiecode' => 1001, 'naam' => 'Example B.V.']]
+$snelstart->relaties()->create([]);      // throws a SnelstartException with REL-0007
+
+$transport->sent('relaties');            // the requests: method, url, headers and body
 ```
 
-## A refused token
+- `respond($needle, ...$answers)` answers every request whose `METHOD url` contains `$needle`. The rule added last is tried first.
+- An array is a 200 with that array as JSON. A `Response` is that status and body. A `Throwable` is thrown, as a transport that got no response.
+- Several answers are given in turn, and the last one repeats: `->respond('relaties', $pageOne, $pageTwo, [])`.
+- The token endpoint answers by itself with `FakeTransport::ACCESS_TOKEN`, unless you add a rule for `/token`.
+- A request without an answer throws, which the client reports as `Snelstart API call failed. No response: FakeTransport has no answer for ...`.
 
-A 401 on a token the client already had gives one new token and one repeat. A fake that always answers 401 therefore sees the call twice when an earlier call in the same test succeeded, and once when it is the first call:
+In Laravel, bind it to use it for the whole application:
 
 ```php
-$accepted = 'first-token';
-$issued = 0;
-
-Http::fake([
-    'auth.snelstart.nl/*' => function () use (&$issued) {
-        return Http::response(['access_token' => ++$issued === 1 ? 'first-token' : 'second-token']);
-    },
-    'b2bapi.snelstart.nl/*' => function ($request) use (&$accepted) {
-        return $request->hasHeader('Authorization', 'Bearer '.$accepted)
-            ? Http::response(['id' => 'r1'])
-            : Http::response([], 401);
-    },
-]);
-
-$api = app(SnelstartAPI::class);
-$api->getCompanyInfo();
-
-$accepted = 'second-token';   // from now on the first token is refused
-
-expect($api->getCompanyInfo())->toBe(['id' => 'r1']);
+$this->app->instance(\Darvis\Snelstart\Http\Transport::class, $transport);
 ```
 
-## Why Http::fake() does not cover the standalone client
+## Faking the client itself
 
-It uses cURL directly, so `Http::fake()` does not see it and `Http::preventStrayRequests()` does not stop it. In a Laravel application, use the Laravel client. The package tests the standalone client against a small server on `127.0.0.1`, see `tests/Fixtures/standalone-server.php` in the repository.
+For a unit test of your own class you can also mock `Darvis\Snelstart\Client`, or `Snelstart::shouldReceive('companyInfo')` on the facade. `Resource` is final: when your code calls `relaties()->all()`, fake the HTTP layer instead, as above.

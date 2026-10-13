@@ -3,36 +3,45 @@
 - q: What is darvis/snelstart?
   a: >-
     A PHP package with a client for the SnelStart B2B API v2, the API of the Dutch accounting software
-    SnelStart. It fetches and keeps the access token and sends your calls; it has no models, no
-    synchronisation and no webhooks, and it returns the arrays SnelStart answers with.
+    SnelStart. It fetches and keeps the access token, reads and writes every collection of the API
+    with paging, and reports failures with their HTTP status and SnelStart error codes. It has no
+    models, no synchronisation and no webhooks, and it returns the arrays SnelStart answers with.
 
 - q: How do I connect a Laravel application to the SnelStart API?
   a: >-
     Run `composer require darvis/snelstart`, set `SNELSTART_CLIENT_KEY` and
-    `SNELSTART_SUBSCRIPTION_KEY` in `.env` and check with `php artisan snelstart:test`. Then resolve
-    `Darvis\Snelstart\Services\SnelstartAPI` from the container and call `getRelaties()`,
-    `getArtikelen()`, `createRelatie()`, `createVerkooporder()`, or `get()`, `post()`, `put()` and
-    `delete()` for any other endpoint.
+    `SNELSTART_SUBSCRIPTION_KEY` in `.env` and check with `php artisan snelstart:test`. Then use the
+    `Snelstart` facade, or inject `Darvis\Snelstart\Client`: `Snelstart::relaties()->all()`,
+    `Snelstart::verkooporders()->create($data)`, or `get()`, `post()`, `put()` and `delete()` for any
+    other endpoint.
 
 - q: What do I need to use darvis/snelstart, and what does it cost?
   a: >-
-    PHP 8.2 or higher, Laravel 11, 12 or 13, and a client key and a subscription key for the B2B API,
-    both issued by SnelStart. The package itself is free and MIT licensed.
+    PHP 8.2 or higher, and a client key and a subscription key for the B2B API, both issued by
+    SnelStart. The Laravel integration needs Laravel 11, 12 or 13; without Laravel the package needs
+    the cURL extension. The package itself is free and MIT licensed.
 
 - q: How does darvis/snelstart authenticate with SnelStart, and where is the access token kept?
   a: >-
     It posts `grant_type=clientkey` and your client key as a form to the token endpoint and sends the
     token it gets in the `Authorization` header, with the subscription key in the
-    `Ocp-Apim-Subscription-Key` header. The Laravel client keeps the token in memory and, encrypted
-    with the application key, in Laravel's cache until sixty seconds before it expires;
-    `SNELSTART_TOKEN_CACHE=false` keeps it in memory only.
+    `Ocp-Apim-Subscription-Key` header. In Laravel the token is kept in memory and, encrypted with the
+    application key, in Laravel's cache until sixty seconds before it expires;
+    `SNELSTART_TOKEN_CACHE=false` keeps it in memory only. Without Laravel it is kept in memory,
+    unless you give the client a token store of your own.
 
-- q: What happens when a SnelStart call fails, and how do I get the HTTP status?
+- q: How do I get more than 500 rows from SnelStart?
+  a: >-
+    Loop over `all()`: `foreach ($snelstart->relaties()->all() as $relatie)`. It asks for 500 rows at a
+    time with `$skip` and `$top` and fetches the next page only when your loop gets there. `list()` is
+    a single call and returns what SnelStart gives for that one call.
+
+- q: What happens when a SnelStart call fails, and how do I read the error codes?
   a: >-
     The client throws `Darvis\Snelstart\Exceptions\SnelstartException`, which extends
-    `RuntimeException`, with a message such as `Snelstart API call failed. HTTP status: 429.
-    Response: ...`. `$e->status()` gives the HTTP status, and `0` when there was no response. A timeout
-    in the Laravel client is an `Illuminate\Http\Client\ConnectionException` instead.
+    `RuntimeException`. `$e->status()` gives the HTTP status, and `0` when there was no response, such
+    as a timeout. `$e->errorCodes()` gives the SnelStart error codes in the response, such as
+    `REL-0007`, and `$e->errors()` gives each code with the text SnelStart documents for it.
 
 - q: Does darvis/snelstart retry a failed call?
   a: >-
@@ -41,27 +50,22 @@
     backoff. A request gives up after 30 seconds, 10 to connect (`SNELSTART_TIMEOUT`,
     `SNELSTART_CONNECT_TIMEOUT`).
 
+- q: Can darvis/snelstart work with more than one SnelStart administration?
+  a: >-
+    Yes. A client key belongs to one administration, and `withClientKey($key)` gives the same client
+    for another key: `Snelstart::withClientKey($key)->relaties()->list()`. The clients share the
+    subscription key and the token store, and tokens are kept per client key.
+
 - q: Is darvis/snelstart safe with my SnelStart keys?
   a: >-
     The client key goes in the body of the token request and the subscription key and the token go in
     headers, never in a URL. The package replaces all three with `[redacted]` in its exception
-    messages, log lines and command output, and it only stores the token in the cache encrypted. The
+    messages and command output, and in Laravel it only stores the token in the cache encrypted. The
     rest of an error response can hold data of the administration, so protect your logs.
-
-- q: Can I use darvis/snelstart without Laravel?
-  a: >-
-    Yes. `Darvis\Snelstart\Standalone\SnelstartAPI` takes its settings as an array, or from the
-    environment with `fromEnv()`, and uses the PHP cURL extension. It has the same methods, the same
-    exception and the same timeouts, and keeps the token in memory only.
 
 - q: How do I test code that uses darvis/snelstart without calling SnelStart?
   a: >-
-    Use `Http::fake()` for `auth.snelstart.nl/*` (return an `access_token`) and for
+    In Laravel use `Http::fake()` for `auth.snelstart.nl/*` (return an `access_token`) and for
     `b2bapi.snelstart.nl/*`, set `snelstart.client_key` to any value and call
-    `Http::preventStrayRequests()`. Run the tests on the `array` cache store or set
-    `SNELSTART_TOKEN_CACHE=false`, so a cached token does not travel from one test to the next.
-
-- q: Which Laravel and PHP versions does darvis/snelstart support?
-  a: >-
-    PHP 8.2 and higher with Laravel 11, 12 or 13. The test suite runs on every combination, on the
-    lowest and the latest dependencies.
+    `Http::preventStrayRequests()`. Without Laravel, give the client a
+    `Darvis\Snelstart\Testing\FakeTransport`, which answers from a list and records what was sent.

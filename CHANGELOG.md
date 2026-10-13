@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-13
+
+Version 2.0: a rewrite. The two clients of 1.x, one for Laravel and one on cURL, are now one plain
+PHP client, and Laravel only supplies how requests are sent and where the token is kept. See
+[Upgrading](https://arviddejong.github.io/snelstart/upgrading.html) for every old class and method.
+
+### Added
+- **Every collection of the API**: `relaties()`, `artikelen()`, `verkooporders()`, `verkoopfacturen()`,
+  `offertes()`, `grootboeken()` and nineteen more on the client, each a `Resource` with `list()`,
+  `all()`, `find()`, `create()`, `update()` and `delete()`. `resource($path)` reaches any other one.
+- **Paging**: `all()` walks through a collection 500 rows at a time with `$skip` and `$top`, and
+  fetches the next page only when your loop gets there. A collection that answers with the same page
+  twice ends in an exception instead of an endless loop.
+- **SnelStart error codes**: a `SnelstartException` finds the codes in a failed response
+  (`REL-0007`). `errorCodes()` lists them, `hasErrorCode()` checks for one, and `errors()` gives each
+  with the text SnelStart documents for it. The 272 codes of the B2B API v2 are in
+  `Darvis\Snelstart\ErrorCodes`.
+- **More than one administration**: `withClientKey()` gives the same client for another client key.
+  Tokens are kept per client key.
+- **A facade** for Laravel: `Darvis\Snelstart\Laravel\Facades\Snelstart`, alias `Snelstart`.
+- **A client without Laravel and without dependencies**: `new Client(new Config(...))`,
+  `Config::fromArray()`, `Client::fromEnv()`. The package no longer requires `illuminate/*` or Carbon.
+- `Http\Transport` and `Token\TokenStore`: two small interfaces to send requests with your own HTTP
+  client or keep the token in your own store. In Laravel both are bound in the container, so a host
+  app can swap them.
+- `Testing\FakeTransport`, to test code that uses the client without Laravel's `Http::fake()`.
+- `echo()`, which calls the Echo API with the subscription key only, and the config key `echo_url`
+  (`SNELSTART_ECHO_URL`).
+- `post()` and `put()` take a query array as third argument.
+
+### Changed
+- **Breaking:** `Services\SnelstartAPI` and `Standalone\SnelstartAPI` are replaced by
+  `Darvis\Snelstart\Client`. `getCompanyInfo()` is `companyInfo()`, `getRelaties()` is
+  `relaties()->list()`, `createRelatie()` is `relaties()->create()`, `getArtikelen()` is
+  `artikelen()->list()` and `createVerkooporder()` is `verkooporders()->create()`.
+- **Breaking:** a timeout or connection error is a `SnelstartException` with status `0` in Laravel
+  too, with Laravel's `ConnectionException` as its previous exception. 1.x let that exception through.
+- **Breaking:** `get()`, `post()`, `put()` and `delete()` return the decoded response as it is:
+  `null` for an empty one, and a string or number when that is what SnelStart sends. 1.x returned `[]`
+  for everything that was not an object or a list.
+- **Breaking:** the client is built without a client key and throws `Snelstart config is incomplete:
+  the client key is empty.` on the first call that needs a token. 1.x threw `Snelstart API config is
+  incomplete (token_url, client_key).` from the constructor.
+- **Breaking:** the service provider is `Darvis\Snelstart\Laravel\SnelstartServiceProvider`. Package
+  discovery picks it up; only a manual registration has to change.
+- **Breaking:** `Support\SnelstartConfig` is replaced by `$client->config()`; the package itself reads
+  its config through `Laravel\SnelstartConfig`.
+- `php artisan snelstart:test` checks the subscription key (Echo API) and the client key
+  (`/companyInfo`) one after the other and says which one was refused. It prints the name of the
+  administration, no longer the whole company info: command output ends up in deploy logs.
+- Query values `true` and `false` are sent as those words.
+- The token cache warning no longer goes through the redaction of keys: a cache error does not hold
+  them.
+
+### Security
+- No redirect is followed, in either transport. In 1.x the Laravel client followed redirects, which
+  would have carried the subscription key and the request body to the other host.
+- The keys, the headers and the request body are marked as sensitive parameters, so they stay out of
+  the stack traces that error trackers record.
+- A key is also redacted when a server writes it back as .NET escapes JSON (`\u002B`), HTML encoded
+  or with lowercase percent encoding.
+- A `POST` or `PUT` without a body is sent with `Content-Length: 0` by the cURL transport too.
+
+### Fixed
+- The Echo API was called below the base URL of the v2 API (`/v2/echo/resource`). It has its own base
+  URL, `https://b2bapi.snelstart.nl/echo`.
+
+### Removed
+- **Breaking:** `EchoService` and the container alias `snelstart.echo`. Use `echo()`.
+- **Breaking:** `head()`. The API v2 has no `HEAD` call.
+- **Breaking:** the protected methods and properties of the 1.x clients. Extend the behaviour with a
+  `Transport` or a `TokenStore`.
+
 ## [1.3.1] - 2026-09-21
 
 ### Fixed
@@ -203,7 +276,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SNELSTART_CLIENT_KEY` - Custom client key
 - `SNELSTART_SUBSCRIPTION_KEY` - B2B portal subscription key
 
-[Unreleased]: https://github.com/ArvidDeJong/snelstart/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/ArvidDeJong/snelstart/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/ArvidDeJong/snelstart/compare/v1.3.1...v2.0.0
 [1.3.1]: https://github.com/ArvidDeJong/snelstart/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/ArvidDeJong/snelstart/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ArvidDeJong/snelstart/compare/v1.1.0...v1.2.0

@@ -1,98 +1,145 @@
 ---
 title: "How it works"
 nav_order: 4
-description: "How darvis/snelstart authenticates, where the access token is cached, the retry on a refused token, the timeouts and where the SnelStart keys travel."
+description: "How darvis/snelstart works: one plain PHP client, the token and where it is kept, the repeat after a 401, paging, error codes, timeouts and where keys go."
 ---
 
 # How it works
 
-## What happens when you make a call
+## One client, two ways to run it
 
-1. The client looks for an access token (the short lived key SnelStart gives in exchange for your client key): first on its own instance, then in the cache. When there is none, or it expires within sixty seconds, it fetches one first.
-2. The token request is a form post to the token URL with `grant_type=clientkey` and `clientkey=<your client key>`.
-3. The API call goes to the base URL plus the path, with `Authorization: Bearer <token>`, `Accept: application/json` and, when a subscription key is set, `Ocp-Apim-Subscription-Key`.
-4. A 401 on a token the client already had is answered with a new token and one repeat of the call, see below.
-5. A 4xx or 5xx answer throws. Anything else is decoded as JSON and returned as an array.
+`Darvis\Snelstart\Client` is plain PHP. It builds every request itself (URL, headers, body) and hands it to two small parts it gets from outside:
 
-## Where the token lives
-
-- The token is kept until sixty seconds before its `expires_in`. Without `expires_in` in the response the client assumes 3600 seconds.
-- **In memory, on the instance.** The Laravel client is a singleton, so within one process the cache is read once, however many calls follow.
-- **In the cache, encrypted.** The Laravel client stores the token in Laravel's cache for the same period, so the next web request, the next job and the next process use it instead of fetching their own. The value is encrypted with the application key (`Crypt`), because a cache store is often shared and this is a token for a bookkeeping.
-- The cache key is `snelstart.token.` plus a SHA-256 hash of the token URL and the client key. Two administrations in one application never share a token, and the client key is not readable in the key.
-- A cached value the application cannot decrypt (a rotated `APP_KEY`, something else under that key) counts as no token: it is removed and a new token is fetched. Nothing throws.
-- `php artisan cache:clear` removes the token with everything else. The next call fetches a new one; nothing else happens.
-- When the cache store is down, does not exist, or the application has no `APP_KEY`, the client logs one warning (`Snelstart token cache is not available, the token is kept in memory only: ...`) and works from memory.
-- `$snelstart->forgetToken()` drops the token on purpose, in memory and in the cache.
-- **One request fetches, the others wait.** When the cache has no token, the client takes a lock on the same cache store before it calls the token endpoint, and looks in the cache once more when it has the lock. Requests that arrive together on a cold cache wait at most five seconds for the first one and then use its token, so there is one token request instead of one per request. A store without locks, a lock that does not come free in those five seconds or a lock that fails: the client fetches a token without the lock. The lock never fails a call.
-
-| Setting | Environment variable | Default |
+| Part | Without Laravel | In Laravel |
 | --- | --- | --- |
-| `token_cache.enabled` | `SNELSTART_TOKEN_CACHE` | `true` |
-| `token_cache.store` | `SNELSTART_TOKEN_CACHE_STORE` | none: the default cache store |
+| Transport: sends one request | `Http\CurlTransport`, PHP cURL | `Laravel\HttpTransport`, Laravel's HTTP client, so `Http::fake()` works |
+| Token store: keeps the token between calls | `Token\MemoryTokenStore`, for as long as the PHP process lives | `Laravel\CacheTokenStore`, Laravel's cache, encrypted, plus memory |
 
-With `SNELSTART_TOKEN_CACHE=false` the token only lives in memory, on the instance, as it did up to 1.1: every web request fetches its own.
+Everything else is the same code in both: authentication, the repeat after a 401, paging, the exception, the redaction of keys. There is nothing to keep in step.
 
-The standalone client has no cache and no lock; its token lives on the instance.
+## Authentication
 
-## A refused token: one new token, one repeat
+SnelStart uses two keys. The subscription key goes with every call in the `Ocp-Apim-Subscription-Key` header. The client key is exchanged for an access token:
 
-When a call gets a 401 (the HTTP status for "not authorised") and the token was one the client already had, from memory or from the cache, the token is no longer accepted although its lifetime has not run out. Both clients then forget the token, fetch a new one and send the same request once more.
+```text
+POST https://auth.snelstart.nl/b2b/token
+Content-Type: application/x-www-form-urlencoded
 
-- Only a 401 is repeated: the status with which a server refuses a request because of its credentials.
-- A second 401 throws, as any other failure does.
-- A 401 on a token that was fetched for this very call is not repeated: a new token would not change the answer. Check the subscription key.
-- A 401 of the token endpoint is never repeated.
-- Nothing else is retried: not a 429, not a 5xx.
+grant_type=clientkey&clientkey=<your client key>
+```
+
+The token from the answer goes with every API call in the `Authorization: Bearer` header. The client does this before the first call; you never fetch a token yourself.
+
+## Where the token is kept
+
+A token is kept until sixty seconds before SnelStart says it expires (`expires_in`, 3600 seconds when the answer does not say). A token that would expire within those sixty seconds is used for the one call and not kept.
+
+In Laravel the token is kept in memory and in the cache, so a web request or a queue worker does not fetch its own:
+
+- It is encrypted with your `APP_KEY`. A cached value that cannot be decrypted, for example after the key was rotated, counts as no token: it is removed and a new token is fetched.
+- The cache key is `snelstart.token.` plus a SHA-256 hash of the token URL and the client key. The client key itself is not in it.
+- When several requests find the cache empty at the same moment, one fetches a token under a lock and the others wait at most five seconds and use that token.
+- The cache never fails a call. A store that is down, a store without locks or a lock that fails means one warning in the log (`Snelstart token cache is not available, the token is kept in memory only: ...`) and a client that works from memory.
+
+`SNELSTART_TOKEN_CACHE=false` keeps the token in memory only. `php artisan cache:clear` only makes the next call fetch a new token. `forgetToken()` drops the token on purpose.
+
+## The one repeat after a 401
+
+When SnelStart answers a call with a 401 and the token was one the client already had, the client forgets that token, fetches a new one and repeats the call once. A 401 on a token that was fetched for this very call is not repeated: that 401 is not about the token, and repeating it would only send the client key to the token endpoint again and again.
+
+Nothing else is ever repeated. A 429, a 5xx and a timeout are thrown as they are, because only your application knows whether a call may be sent twice.
+
+## Collections and paging
+
+A collection such as `relaties()` is a `Darvis\Snelstart\Resource`: a path with six methods.
+
+| Method | Call |
+| --- | --- |
+| `list($query)` | `GET /relaties`, one call |
+| `all($query, $pageSize)` | `GET /relaties` with `$skip` and `$top`, page by page |
+| `find($id)` | `GET /relaties/<id>` |
+| `create($data)` | `POST /relaties` |
+| `update($id, $data)` | `PUT /relaties/<id>` |
+| `delete($id)` | `DELETE /relaties/<id>` |
+
+The SnelStart documentation gives 500 as the default for `$top`, the maximum number of results of one call. `list()` therefore returns at most the first 500 rows unless you page yourself. `all()` does the paging: it asks for 500 rows, hands them to your loop one by one, and asks for the next 500 only when your loop gets there. It stops after a page that is not full, and throws when a collection answers with the same page twice instead of the next one.
+
+```php
+foreach ($snelstart->verkoopfacturen()->all(['$filter' => 'openstaandSaldo gt 0']) as $factuur) {
+    // ...
+}
+```
+
+Some collections have no paging in the SnelStart documentation (`landen()`, `dagboeken()`, `kostenplaatsen()` and a few more). For those `all()` is one call without `$skip` and `$top`. Which is which is in the [API reference](api-reference.md#collections).
+
+The package does not know which methods a collection supports. Calling one SnelStart does not have, such as `btwtarieven()->delete($id)`, is answered by SnelStart with a 404 or a 405, which arrives as a `SnelstartException`.
+
+## Query and body
+
+A query array is encoded once, by the client: `['$filter' => "naam eq 'Jansen'", '$top' => 10]` becomes `?%24filter=naam%20eq%20%27Jansen%27&%24top=10`. `true` and `false` are sent as the words `true` and `false`.
+
+A data array is sent as JSON. An empty array sends no body. What comes back is decoded: an array for a JSON object or list, `null` for an empty response, and the raw string when the response is not JSON. The methods of a collection always return an array.
+
+## When a call fails
+
+Every failure is a `Darvis\Snelstart\Exceptions\SnelstartException`, which extends `RuntimeException`.
+
+| What happened | `status()` | Message starts with |
+| --- | --- | --- |
+| The API answered with a 4xx or 5xx | that status | `Snelstart API call failed. HTTP status: 429. Response: ...` |
+| The token endpoint answered with a 4xx or 5xx | that status | `Failed to retrieve access_token from Snelstart. HTTP status: 400. Response: ...` |
+| The token endpoint answered without a token | the status of that answer | `Snelstart token response does not contain access_token.` |
+| There was no response: timeout, DNS, refused connection | `0` | `Snelstart API call failed. No response: ...` |
+| The client key is empty | `0` | `Snelstart config is incomplete: the client key is empty.` |
+| The data cannot be encoded as JSON | `0` | `Snelstart request data cannot be sent as JSON: ...` |
+| `all()` got the same page twice | `0` | `Snelstart paging does not advance: ...` |
+
+For a missing response the cause, such as Laravel's `ConnectionException`, is the previous exception: `$e->getPrevious()`.
+
+### SnelStart error codes
+
+With a 400 SnelStart often sends its own error codes: three letters for the part of the API and four digits, such as `REL-0007`. The exception finds the codes in the response, whatever the shape of that response:
+
+```php
+try {
+    $snelstart->relaties()->create($data);
+} catch (SnelstartException $e) {
+    $e->errorCodes();              // ['REL-0007', 'REL-0011']
+    $e->hasErrorCode('REL-0008');  // false
+    $e->errors();                  // ['REL-0007' => 'Naam moet gevuld zijn', 'REL-0011' => 'Iban is ongeldig']
+}
+```
+
+The texts in `errors()` come from the list SnelStart publishes, which the package carries in `Darvis\Snelstart\ErrorCodes` (272 codes, in Dutch, as SnelStart wrote them). A number that is not in that list yet has `null`. Decide on the code, never on the text.
+
+The codes are found by their shape, anywhere in the body. When your own data has that shape, say an article code `ART-0002` that SnelStart quotes in its answer, it is listed too.
+
+The response body is not a property of the exception. It can hold data of the administration, and a property ends up in error trackers that serialise exceptions. The message has the body, with the keys redacted.
 
 ## Timeouts
 
-Both clients wait 30 seconds for a whole request and 10 seconds for the connection, the token request included.
+Every request, the token request included, gives up after 30 seconds, and after 10 seconds when no connection is made. `SNELSTART_TIMEOUT` and `SNELSTART_CONNECT_TIMEOUT` change that; a value below one second, such as `0.5`, works.
 
-| Setting | Environment variable | Default |
-| --- | --- | --- |
-| `timeout` | `SNELSTART_TIMEOUT` | `30` |
-| `connect_timeout` | `SNELSTART_CONNECT_TIMEOUT` | `10` |
+## More than one administration
 
-Both are in seconds, and `2.5` is allowed. A value that is not a positive number gives the default.
+A client key belongs to one administration. `withClientKey()` gives the same client for another one:
 
-## What a call returns
+```php
+$nl = Snelstart::withClientKey($company->snelstart_client_key);
+$be = Snelstart::withClientKey($other->snelstart_client_key);
 
-| Response | Result |
-| --- | --- |
-| 2xx with a JSON object or list | The decoded array |
-| 2xx with an empty body (204, `HEAD`) | `[]` |
-| 2xx with a body that is not a JSON object or list | `[]` |
-| 4xx or 5xx | `SnelstartException` with that status |
-
-## What a failure looks like
-
-```text
-Snelstart API call failed. HTTP status: 429. Response: {"message":"..."}
-Failed to retrieve access_token from Snelstart. HTTP status: 401. Response: {"error":"..."}
-Snelstart token response does not contain access_token.
-Snelstart API config is incomplete (token_url, client_key).
+$nl->relaties()->list();
+$be->relaties()->list();
 ```
 
-- All four are a `Darvis\Snelstart\Exceptions\SnelstartException`, which extends `RuntimeException`. The messages are the ones above, so a `catch (\RuntimeException $e)` and a match on the text keep working.
-- **Read the status, don't parse the message.** `$e->status()`, and `$e->getCode()`, give the HTTP status of the response that caused the exception: 429 and 401 for the first two lines, the status of the 2xx token response for the third, and `0` for the fourth, because there was no response.
-- The response body is not a property of the exception. It can hold data of the administration; the message has the part that was always there, with the keys redacted.
-- **A 429 or a 5xx is not retried.** Retry from a queued job with a backoff.
-- In the Laravel client a timeout or a connection error is an `Illuminate\Http\Client\ConnectionException`. That class is not a `RuntimeException` and not a `SnelstartException`, so catch it separately; the package leaves it as it is, because host apps catch that class. The standalone client throws a `SnelstartException` with `cURL error: ...` and status `0` for the same.
-- `EchoService` does not throw: it catches everything, writes `Snelstart Echo Resource GET failed: ...` to the log with `Log::error()` and returns an array with `success` set to `false`.
+Both share the subscription key, the transport and the token store. Tokens are kept per client key, so the administrations never see each other's token. Store client keys encrypted, for example with an `encrypted` cast.
 
 ## Where the keys go
 
-| Secret | Travels in | Never in |
-| --- | --- | --- |
-| Client key | The form body of the token request | A URL, a header |
-| Subscription key | The `Ocp-Apim-Subscription-Key` header of API calls | A URL, the token request |
-| Access token | The `Authorization` header of API calls; encrypted in the cache | A URL, a log line, the cache in readable form |
-
-The response body of a failed call is part of the exception message, and a server can echo what it received. Before the message is thrown the client replaces the client key, the subscription key and the access token in it with `[redacted]`, also in their JSON escaped and URL encoded forms. That message is what `EchoService` logs and what `php artisan snelstart:test` prints.
-
-The rest of the response body is not filtered. It can hold data of the administration, so treat your log as you treat the bookkeeping.
-
-## Which of the two clients this is about
-
-`Darvis\Snelstart\Services\SnelstartAPI` is the client for Laravel. `Darvis\Snelstart\Standalone\SnelstartAPI` is the same set of methods for a project without Laravel. See [Standalone client](standalone.md) for the differences.
+- The client key goes in the body of the token request, the subscription key and the token in headers. Never in a URL: error messages and logs quote URLs.
+- Before a message is thrown the client replaces the client key, the subscription key and the access token in it with `[redacted]`, also in their JSON escaped, URL encoded and HTML encoded forms. A server can echo what it received.
+- The keys are marked as sensitive parameters, so PHP leaves them out of stack traces.
+- No redirect is followed: it would carry the keys to another host.
+- In Laravel the requests pass through the HTTP client and its events like any other. A tool that records outgoing requests, such as Telescope, records these too, with the subscription key header, the `clientkey` field of the token request and the `access_token` in its answer. Check what yours stores, and hide those three.
+- `php artisan snelstart:test` prints the name of the administration and nothing else from it.
+- The rest of an error response can hold data of the administration. Who can read your logs is up to your application.

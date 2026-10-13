@@ -2,7 +2,7 @@
 
 namespace Darvis\Snelstart\Tests;
 
-use Darvis\Snelstart\SnelstartServiceProvider;
+use Darvis\Snelstart\Laravel\SnelstartServiceProvider;
 use Illuminate\Support\Facades\Http;
 use Orchestra\Testbench\TestCase as Orchestra;
 
@@ -31,7 +31,7 @@ abstract class TestCase extends Orchestra
 
     protected function getEnvironmentSetUp($app): void
     {
-        // The package defaults have no keys, and without a client key the client cannot be built.
+        // The package defaults have no keys.
         $app['config']->set('snelstart.client_key', self::CLIENT_KEY);
         $app['config']->set('snelstart.subscription_key', self::SUBSCRIPTION_KEY);
 
@@ -44,7 +44,7 @@ abstract class TestCase extends Orchestra
      * The key the client stores its token under. Pinned here on purpose: a change of format makes
      * every host app fetch a new token once, which is harmless, but must not happen by accident.
      */
-    public static function tokenCacheKey(string $clientKey = self::CLIENT_KEY, string $tokenUrl = 'https://auth.snelstart.nl/b2b/token'): string
+    public static function tokenKey(string $clientKey = self::CLIENT_KEY, string $tokenUrl = 'https://auth.snelstart.nl/b2b/token'): string
     {
         return 'snelstart.token.'.hash('sha256', $tokenUrl.'|'.$clientKey);
     }
@@ -52,7 +52,7 @@ abstract class TestCase extends Orchestra
     /**
      * Fake the token endpoint and the API. The token endpoint always answers with the test token.
      *
-     * @param  array<string, mixed>|callable  $api
+     * @param  array<mixed>|callable  $api
      */
     protected function fakeSnelstart(array|callable $api = [], int $expiresIn = 3600): void
     {
