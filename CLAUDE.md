@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Namespace: `Darvis\Snelstart\` → `src/`
 - Service provider auto-registered via `extra.laravel.providers` in [composer.json](composer.json)
 - Config key: `snelstart`
-- Container: `Services\SnelstartAPI` (alias `snelstart`) and `Services\EchoService` (alias `snelstart.echo`), both singletons. There is no facade and there are no models; `src/Facades` and `src/Models` were plans in the 1.0 working note that were never built.
+- Container: `Services\SnelstartAPI` (alias `snelstart`) and `Services\EchoService` (alias `snelstart.echo`), both singletons. There is no facade and there are no models.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Timeouts: `timeout` and `connect_timeout` (30 and 10 seconds, the numbers of Laravel's HTTP client), on every request, the token request included. The Laravel client passes them as Guzzle options, the standalone client as `CURLOPT_TIMEOUT_MS` and `CURLOPT_CONNECTTIMEOUT_MS` with `CURLOPT_NOSIGNAL`, which is what Guzzle does too, so `0.5` works in both.
 - [EchoService](src/Services/EchoService.php) wraps `/echo/resource` and never throws; it logs and returns `success => false`.
 - [TestSnelstartConnection](src/Console/Commands/TestSnelstartConnection.php) resolves the client inside its `try`. Don't inject it into `handle()`: the constructor of the client throws without a client key, and an injected argument is resolved before the `try`, so the user gets a stack trace instead of `Connection failed`.
-- The standalone client cannot be faked with `Http::fake()`. `tests/Unit/StandaloneSnelstartApiTest.php` starts [tests/Fixtures/standalone-server.php](tests/Fixtures/standalone-server.php) on `127.0.0.1` with a free port; the path of a request picks the answer, and every request is written to a log file the test reads. For `HEAD` that server keeps the connection open, which is what caught the missing `CURLOPT_NOBODY`.
+- The standalone client cannot be faked with `Http::fake()`. `tests/Unit/StandaloneSnelstartApiTest.php` starts [tests/Fixtures/standalone-server.php](tests/Fixtures/standalone-server.php) on `127.0.0.1` with a free port; the path of a request picks the answer, and every request is written to a log file the test reads. For `HEAD` that server keeps the connection open, so a request without `CURLOPT_NOBODY` hangs there.
 
 ## Conventions
 
